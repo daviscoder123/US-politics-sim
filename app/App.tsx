@@ -15,6 +15,7 @@ import {
   stavProAi,
   parsujPlan,
   provedPlan,
+  sestavPlanBezAi,
   type GameState,
 } from "../engine/engine-bundle.ts";
 
@@ -45,9 +46,9 @@ const KLICE_BRANCE = ["kandidat", "radni", "starosta", "kongresman", "guverner",
 type Barva = "zelena" | "zluta" | "cervena";
 
 function tridaBarvy(b: Barva): string {
-  if (b === "zelena") return "bg-emerald-500";
-  if (b === "zluta") return "bg-amber-400";
-  return "bg-rose-500";
+  if (b === "zelena") return "bg-gradient-to-r from-emerald-600 to-emerald-400";
+  if (b === "zluta") return "bg-gradient-to-r from-amber-600 to-amber-400";
+  return "bg-gradient-to-r from-rose-700 to-rose-500";
 }
 
 function textBarvy(b: Barva): string {
@@ -386,7 +387,7 @@ function Monogram({ jmeno, uroven }: { jmeno: string; uroven: string }) {
     prezident: "bg-amber-600",
   };
   return (
-    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${barvaUrovne[uroven] ?? "bg-slate-600"}`}>
+    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-md ring-2 ring-slate-950/60 ${barvaUrovne[uroven] ?? "bg-slate-600"}`}>
       {iniciály}
     </div>
   );
@@ -396,7 +397,7 @@ function ApDots({ ap, max }: { ap: number; max: number }) {
   return (
     <div className="flex items-center gap-1" title={`Akční body: ${ap}/${max}`}>
       {Array.from({ length: max }, (_, i) => (
-        <span key={i} className={`h-2 w-2 rounded-full ${i < ap ? "bg-emerald-400" : "bg-slate-600"}`} />
+        <span key={i} className={`h-2.5 w-2.5 rounded-full ${i < ap ? "bg-emerald-400" : "bg-slate-700"}`} />
       ))}
     </div>
   );
@@ -404,25 +405,25 @@ function ApDots({ ap, max }: { ap: number; max: number }) {
 
 function Pruh({ label, hodnota, barva, zprava }: { label: string; hodnota: number; barva: Barva; zprava?: string }) {
   return (
-    <div className="mb-2">
+    <div className="mb-2.5">
       <div className="mb-1 flex items-baseline justify-between text-xs">
         <span className="text-slate-300">{label}</span>
-        <span className={`font-semibold ${textBarvy(barva)}`}>{zprava ?? FORMAT_CISLO.format(hodnota)}</span>
+        <span className={`font-bold ${textBarvy(barva)}`}>{zprava ?? FORMAT_CISLO.format(hodnota)}</span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
-        <div className={`h-full rounded-full ${tridaBarvy(barva)}`} style={{ width: `${Math.max(2, Math.min(100, hodnota))}%` }} />
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-700/70">
+        <div className={`h-full rounded-full ${tridaBarvy(barva)} transition-all`} style={{ width: `${Math.max(2, Math.min(100, hodnota))}%` }} />
       </div>
     </div>
   );
 }
 
 function Karta({ deti, className }: { deti: React.ReactNode; className?: string }) {
-  return <div className={`rounded-xl border border-slate-700 bg-slate-800/70 p-4 ${className ?? ""}`}>{deti}</div>;
+  return <div className={`rounded-2xl border border-slate-700/70 bg-slate-800/70 p-4 shadow-lg ${className ?? ""}`}>{deti}</div>;
 }
 
 function Udaj({ label, hodnota, barva }: { label: string; hodnota: string; barva: Barva }) {
   return (
-    <div className="rounded-lg bg-slate-900/60 px-2.5 py-1.5">
+    <div className="rounded-xl border border-slate-700/60 bg-slate-900/70 px-2.5 py-1.5 shadow-sm">
       <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
       <div className={`text-sm font-bold ${textBarvy(barva)}`}>{hodnota}</div>
     </div>
@@ -441,10 +442,17 @@ function Prolog({ onStart }: { onStart: (p: { jmeno: string; vek: number; archet
   const [seed, setSeed] = useState(2027);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <header className="mb-8 text-center">
-        <h1 className="text-4xl font-black tracking-tight text-white">Politický simulátor USA</h1>
-        <p className="mt-2 text-slate-400">Od zakladatele firmy k Bílému domu. Řekněte štábu, co chcete — AI to přeloží do herních akcí.</p>
+    <div className="mx-auto max-w-5xl px-4 py-10">
+      <header className="mb-10 text-center">
+        <div className="mx-auto mb-4 flex h-1.5 w-40 overflow-hidden rounded-full">
+          <div className="flex-1 bg-sky-500" />
+          <div className="flex-1 bg-slate-200" />
+          <div className="flex-1 bg-rose-500" />
+        </div>
+        <h1 className="bg-gradient-to-r from-sky-400 via-white to-rose-400 bg-clip-text text-5xl font-black tracking-tight text-transparent">
+          Politický simulátor USA
+        </h1>
+        <p className="mt-3 text-slate-400">Od zakladatele firmy k Bílému domu. Řekněte štábu, co chcete — štáb to přeloží do herních akcí, bez klíče i s ním.</p>
       </header>
 
       <Karta className="mb-6">
@@ -503,8 +511,10 @@ function Prolog({ onStart }: { onStart: (p: { jmeno: string; vek: number; archet
             <button
               key={a.id}
               onClick={() => setArchetyp(a.id)}
-              className={`rounded-xl border-2 p-4 text-left transition-colors ${
-                vybrany ? "border-emerald-400 bg-emerald-400/10" : "border-slate-700 bg-slate-800/70 hover:border-slate-500"
+              className={`rounded-xl border-2 p-4 text-left transition-all ${
+                vybrany
+                  ? "border-emerald-400 bg-emerald-400/10 shadow-lg shadow-emerald-500/10"
+                  : "border-slate-700 bg-slate-800/70 hover:-translate-y-1 hover:border-slate-500 hover:shadow-xl"
               }`}
             >
               <div className="flex items-baseline justify-between">
@@ -526,7 +536,7 @@ function Prolog({ onStart }: { onStart: (p: { jmeno: string; vek: number; archet
 
       <button
         onClick={() => onStart({ jmeno, vek, archetyp, stat, seed })}
-        className="mt-8 w-full rounded-xl bg-emerald-500 py-4 text-lg font-bold text-slate-950 transition-colors hover:bg-emerald-400"
+        className="mt-8 w-full rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 py-4 text-lg font-bold text-slate-950 shadow-xl transition-all hover:from-emerald-400 hover:to-teal-400"
       >
         Začít kariéru
       </button>
@@ -534,7 +544,7 @@ function Prolog({ onStart }: { onStart: (p: { jmeno: string; vek: number; archet
       <Karta className="mt-4 p-4">
         <h3 className="mb-2 text-sm font-bold text-white">Jak se hraje</h3>
         <ol className="list-decimal space-y-1.5 pl-5 text-xs text-slate-300">
-          <li>Formulujte záměr přirozeným jazykem („obejdu okres, navrhnu daňovou úlevu“) — přeloží ho AI do konkrétních akcí. Bez klíče fungují ruční akce i tak.</li>
+          <li>Formulujte záměr přirozeným jazykem („obejdu okres, navrhnu daňovou úlevu“) — přeloží ho štáb: s API klíčem Mistral AI, bez klíče místní poradce. Obojí vykonává engine.</li>
           <li>Každá akce stojí body politické kapitálu (AP). „Stůl štábu“ vždy doporučí, co je aktuálně nejnaléhavější.</li>
           <li>Čas plyne tlačítkem v hlavičce — týden dospěje, engine vyhodnotí důsledky a vrátí strukturovaný souhrn.</li>
         </ol>
@@ -567,35 +577,64 @@ function VolebniNoc({ data, zavreni }: { data: VolebniData; zavreni: () => void 
     for (const s of data.detail.staty) vysledky[s.stat] = s.hracVyhrava;
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4">
-      <div className="max-h-full w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-6">
-        <div className="mb-1 flex items-center gap-3">
-          <span className="rounded bg-slate-800 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-amber-300">Volby</span>
-          <h2 className={`text-2xl font-black ${data.vyhral ? "text-emerald-400" : "text-rose-400"}`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95 p-4">
+      <div className="max-h-full w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+        <div className="flex h-1.5 overflow-hidden rounded-t-2xl">
+          <div className="flex-1 bg-sky-700" />
+          <div className="flex-1 bg-slate-200" />
+          <div className="flex-1 bg-rose-700" />
+        </div>
+        <div className="p-6">
+        <div className="mb-1 flex flex-wrap items-center gap-3">
+          <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-300 shadow-sm">Volby · sčítání výsledků</span>
+          <h2 className={`text-3xl font-black tracking-tight ${data.vyhral ? "text-emerald-400" : "text-rose-400"}`}>
             {data.vyhral ? "VOLBY VYHRÁNY" : "VOLBY PROHRÁNY"}
           </h2>
+          <span className="ml-auto text-sm text-slate-400">
+            {Math.round(data.share * 100)} % hlasů · cíl: {NAZVY_UROVNI[data.cil] ?? data.cil}
+          </span>
         </div>
-        <p className="text-slate-400">
-          {Math.round(data.share * 100)} % hlasů · cílová funkce: {NAZVY_UROVNI[data.cil] ?? data.cil}
-        </p>
+
         {data.detail ? (
           <>
-            <p className="mt-3 text-slate-400">
-              Elektorské hlasy: <span className="font-bold text-sky-400">{data.detail.evHrac}</span> :{" "}
-              <span className="font-bold text-rose-400">{data.detail.evSouper}</span> (k vítězství je nutných 270)
-            </p>
+            {/* Televizní scoreboard elektorských hlasů */}
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-sky-700/60 bg-gradient-to-br from-sky-950/80 to-slate-900 p-4 shadow-lg">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-sky-300">Vy</div>
+                <div className="text-4xl font-black text-sky-300">{data.detail.evHrac}</div>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                  <div className="h-full rounded-full bg-gradient-to-r from-sky-600 to-sky-400" style={{ width: `${Math.min(100, (data.detail.evHrac / 270) * 100)}%` }} />
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500">{data.detail.evHrac >= 270 ? "Vítězný práh překročen" : `chybí ${270 - data.detail.evHrac} k vítězství (270)`}</div>
+              </div>
+              <div className="rounded-2xl border border-rose-700/60 bg-gradient-to-br from-rose-950/80 to-slate-900 p-4 shadow-lg">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-rose-300">Soupeř</div>
+                <div className="text-4xl font-black text-rose-300">{data.detail.evSouper}</div>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                  <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-400" style={{ width: `${Math.min(100, (data.detail.evSouper / 270) * 100)}%` }} />
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500">{data.detail.evSouper >= 270 ? "práh překročen" : `chybí ${270 - data.detail.evSouper} k vítězství (270)`}</div>
+              </div>
+            </div>
+
+            <p className="mt-3 text-xs text-slate-500">Elektorské hlasy — k vítězství je nutných 270 z 538.</p>
+
             <div className="mt-4 space-y-1">
               {MAPA_RADKY.map((rada, i) => (
                 <div key={i} className="grid grid-cols-12 gap-1">
                   {rada.map((kod, j) => {
-                    if (!kod) return <div key={j} className="h-9" />;
+                    if (!kod) return <div key={j} className="h-10" />;
                     const vyhral = vysledky[kod];
                     return (
                       <div
                         key={j}
                         title={`${kod}: ${EV_TABULKA[kod]} volitelů`}
-                        className={`flex h-9 flex-col items-center justify-center rounded text-[10px] font-bold leading-tight ${
-                          vyhral === undefined ? "bg-slate-700 text-slate-300" : vyhral ? "bg-sky-600 text-white" : "bg-rose-600 text-white"
+                        className={`flex h-10 flex-col items-center justify-center rounded-md text-[10px] font-bold leading-tight shadow-md transition-colors ${
+                          vyhral === undefined
+                            ? "bg-slate-700 text-slate-300"
+                            : vyhral
+                              ? "bg-gradient-to-br from-sky-600 to-sky-800 text-white"
+                              : "bg-gradient-to-br from-rose-600 to-rose-800 text-white"
                         }`}
                       >
                         <span>{kod}</span>
@@ -612,10 +651,11 @@ function VolebniNoc({ data, zavreni }: { data: VolebniData; zavreni: () => void 
         )}
         <button
           onClick={zavreni}
-          className="mt-6 w-full rounded-xl bg-emerald-500 py-3 text-base font-bold text-slate-950 transition-colors hover:bg-emerald-400"
+          className="mt-6 w-full rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 py-3 text-base font-bold text-slate-950 shadow-lg transition-all hover:from-emerald-400 hover:to-teal-400"
         >
           Pokračovat
         </button>
+        </div>
       </div>
     </div>
   );
@@ -746,15 +786,28 @@ export default function App() {
     setVstup("");
 
     if (!ai.klic) {
+      /* Místní poradce štábu — hra je plně hratelná bez API klíče. */
+      setChat((c) => [...c, { role: "hrac", text }]);
+      const ns = cloneStav(hra);
+      const poradce = sestavPlanBezAi(text, ns);
+      const vysledek = provedPlan(ns, poradce.plan);
+      setHra(ns);
+      const akceVChatu: ProvedenaAkceVChatu[] = vysledek.provedeno.map((p) => ({
+        nazev: p.akce,
+        ok: p.ok,
+        zprava: p.zprava,
+      }));
+      const varovani = vysledek.provedeno.flatMap((p) => p.varovani);
       setChat((c) => [
         ...c,
-        { role: "hrac", text },
         {
-          role: "system",
-          text: "Pro odpověď štábu je potřeba API klíč Mistral. Otevřete „Nastavení AI“ vpravo nahoře, vložte klíč z console.mistral.ai a odešlete zprávu znovu. Ruční akce fungují i bez klíče.",
+          role: "ai",
+          text: poradce.plan.reci,
+          akce: akceVChatu,
+          varovani: varovani.length > 0 ? varovani : undefined,
+          poznamka: poradce.rozbor.join(" ") || null,
         },
       ]);
-      setNastaveniOtevreno(true);
       return;
     }
 
@@ -823,7 +876,7 @@ export default function App() {
     } catch (e) {
       setChat((c) => [
         ...c,
-        { role: "system", text: `Štáb se neozval: ${(e as Error).message} Zkontrolujte API klíč v nastavení AI; ruční akce fungují nezávisle.` },
+        { role: "system", text: `Štáb se neozval: ${(e as Error).message} Zkontrolujte API klíč v nastavení AI. Bez klíče přebírá záměry místní poradce — stačí klíč vymazat.` },
       ]);
     }
     setCeka(false);
@@ -915,7 +968,12 @@ export default function App() {
 
   if (!hra) {
     return (
-      <div className="min-h-screen bg-slate-900">
+      <div className="min-h-screen bg-slate-950">
+        <div className="flex h-1.5">
+          <div className="flex-1 bg-sky-700" />
+          <div className="flex-1 bg-slate-200" />
+          <div className="flex-1 bg-rose-700" />
+        </div>
         <Prolog onStart={start} />
       </div>
     );
@@ -926,9 +984,15 @@ export default function App() {
   const cilBrance = BRANCE[KLICE_BRANCE[Math.min(indexUrovne + 1, KLICE_BRANCE.length - 1)]];
 
   return (
-    <div className="min-h-screen bg-slate-900 pb-10">
+    <div className="min-h-screen bg-slate-950 pb-10">
+      {/* Trikolóra — vizuální motiv volebního vysílání */}
+      <div className="flex h-1.5">
+        <div className="flex-1 bg-sky-700" />
+        <div className="flex-1 bg-slate-200" />
+        <div className="flex-1 bg-rose-700" />
+      </div>
       {/* Kompaktní hlavička */}
-      <header className="sticky top-0 z-40 border-b border-slate-700 bg-slate-900/95 px-4 py-2.5 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/95 px-4 py-2.5 shadow-lg backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2">
           <div className="flex items-center gap-2.5">
             <Monogram jmeno={hra.postava.jmeno} uroven={hra.funkce.uroven} />
@@ -945,11 +1009,19 @@ export default function App() {
             Majetek <span className="font-bold text-white">{usd(a.majetekUSD)}</span>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <span
+              className={`hidden rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide sm:inline-block ${
+                ai.klic ? "bg-emerald-900/70 text-emerald-200" : "bg-sky-900/70 text-sky-200"
+              }`}
+              title={ai.klic ? "Záměry překládá Mistral AI" : "Bez klíče: záměry překládá deterministický místní poradce"}
+            >
+              {ai.klic ? "Štáb: Mistral AI" : "Štáb: místní poradce"}
+            </span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">AP</span>
             <ApDots ap={hra.ap} max={10} />
             <button
               onClick={ukonciKolo}
-              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 transition-colors hover:bg-amber-400"
+              className="rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-md transition-all hover:from-amber-400 hover:to-orange-400"
             >
               Ukončit kolo
             </button>
@@ -989,7 +1061,7 @@ export default function App() {
                 </select>
               </label>
               <div className="text-xs text-slate-400 sm:col-span-1 self-end">
-                Klíč se ukládá pouze do vašeho prohlížeče (localStorage). AI navrhuje plán; engine jej validuje a vykonává.
+                Klíč se ukládá pouze do vašeho prohlížeče (localStorage). Bez klíče překládá záměry místní poradce štábu; AI navrhuje plán, engine jej vždy validuje a vykonává.
               </div>
             </div>
           </div>
@@ -1000,8 +1072,11 @@ export default function App() {
         {/* Hlavní panel: chat se štábem */}
         <section className="lg:col-span-2">
           {briefinkyStavu.length > 0 && (
-            <Karta className="mb-3 p-4">
-              <h3 className="mb-2 text-sm font-bold text-white">Stůl štábu — co řešit tento týden</h3>
+            <Karta className="mb-3 border-l-4 border-l-amber-400">
+              <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-white">
+                <span className="rounded bg-amber-500 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-950">Týden</span>
+                Stůl štábu — co řešit tento týden
+              </h3>
               <div className="space-y-2">
                 {briefinkyStavu.map((b) => (
                   <div key={b.titulek} className="flex flex-col gap-1.5 rounded-lg bg-slate-900/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1027,12 +1102,12 @@ export default function App() {
               {chat.map((m, i) => (
                 <div key={i} className={m.role === "hrac" ? "flex justify-end" : "flex justify-start"}>
                   <div
-                    className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm ${
+                    className={`max-w-[85%] px-3.5 py-2.5 text-sm shadow-md ${
                       m.role === "hrac"
-                        ? "bg-emerald-600 text-white"
+                        ? "rounded-2xl rounded-br-sm bg-gradient-to-br from-emerald-500 to-teal-600 text-white"
                         : m.role === "ai"
-                          ? "bg-slate-700 text-slate-100"
-                          : "bg-slate-800 border border-slate-600 text-amber-200"
+                          ? "rounded-2xl rounded-tl-sm border border-slate-600/60 bg-slate-700/90 text-slate-100"
+                          : "rounded-xl border-l-4 border-l-amber-500 bg-amber-900/30 text-amber-100"
                     }`}
                   >
                     <p className="whitespace-pre-wrap">{m.text}</p>
@@ -1117,7 +1192,7 @@ export default function App() {
           </Karta>
 
           {/* Ruční akce — sekundární ovládání, seskupené dle oblastí */}
-          <details className="mt-4 rounded-xl border border-slate-700 bg-slate-800/70 p-4">
+          <details className="mt-4 rounded-2xl border border-slate-700/70 bg-slate-800/70 p-4 shadow-lg">
             <summary className="cursor-pointer text-sm font-bold text-white">Ruční akce (bez AI)</summary>
             <div className="mt-3 space-y-4">
               {PORADI_SKUPIN.map((skupina) => {
@@ -1129,18 +1204,21 @@ export default function App() {
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                       {defsSkupiny.map((def) => {
                         const zaostava = hra.ap < def.ap;
+                        const tridaAp = def.ap >= 5 ? "bg-rose-900/70 text-rose-200" : def.ap >= 3 ? "bg-amber-900/70 text-amber-200" : "bg-sky-900/70 text-sky-200";
                         return (
                           <button
                             key={def.id}
                             disabled={zaostava}
                             onClick={() => otevriAkci(def.id)}
-                            className={`rounded-lg border p-3 text-left transition-colors ${
-                              zaostava ? "border-slate-800 bg-slate-900/50 opacity-50" : "border-slate-700 bg-slate-900/60 hover:border-emerald-500"
+                            className={`rounded-xl border p-3 text-left transition-all ${
+                              zaostava
+                                ? "border-slate-800 bg-slate-900/50 opacity-50"
+                                : "border-slate-700 bg-slate-900/60 hover:-translate-y-0.5 hover:border-emerald-500 hover:shadow-lg hover:shadow-emerald-500/10"
                             }`}
                           >
                             <div className="flex items-baseline justify-between gap-2">
                               <span className="text-sm font-bold text-white">{def.nazev}</span>
-                              <span className="shrink-0 rounded-full bg-sky-900/70 px-2 py-0.5 text-[11px] font-bold text-sky-200">{def.ap} AP</span>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${tridaAp}`}>{def.ap} AP</span>
                             </div>
                             <p className="mt-0.5 text-[11px] text-slate-400">{def.popis}</p>
                           </button>
@@ -1154,7 +1232,7 @@ export default function App() {
           </details>
 
           {/* Archiv: kodex, sliby, lidé, deník */}
-          <details className="mt-4 rounded-xl border border-slate-700 bg-slate-800/70 p-4">
+          <details className="mt-4 rounded-2xl border border-slate-700/70 bg-slate-800/70 p-4 shadow-lg">
             <summary className="cursor-pointer text-sm font-bold text-white">Archiv — kodex, sliby, lidé, deník</summary>
             <div className="mt-4 space-y-4">
               <div>
@@ -1286,7 +1364,10 @@ export default function App() {
         {/* Postranní panel: brance a ukazatele */}
         <section className="space-y-4">
           <Karta>
-            <h3 className="mb-2 text-sm font-bold text-white">Kariérní brance — cíl: {NAZVY_UROVNI[cilBrance.cilovaUroven]}</h3>
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-white">
+              <span className="inline-block h-3.5 w-1 rounded bg-amber-400" />
+              Kariérní brance — cíl: {NAZVY_UROVNI[cilBrance.cilovaUroven]}
+            </h3>
             <Pruh
               label="Pokladna kampaně"
               hodnota={(hra.finance.pokladnaKampane / cilBrance.pokladnaKampan) * 100}
@@ -1312,7 +1393,10 @@ export default function App() {
           </Karta>
 
           <Karta>
-            <h3 className="mb-2 text-sm font-bold text-white">Osobní ukazatele</h3>
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-white">
+              <span className="inline-block h-3.5 w-1 rounded bg-sky-400" />
+              Osobní ukazatele
+            </h3>
             <Pruh label="Známost lokální / ve státě / národní" hodnota={Math.max(a.znamostLokal, a.znamostStat, a.znamostNarod)} barva={skala(Math.max(a.znamostLokal, a.znamostStat), 20, 45, true)} zprava={`${Math.round(a.znamostLokal)} / ${Math.round(a.znamostStat)} / ${Math.round(a.znamostNarod)}`} />
             <Pruh label="Integrita" hodnota={a.integrita} barva={skala(a.integrita, 40, 65, true)} />
             <Pruh label="Prodejnost (vnímání ovlivnitelnosti)" hodnota={a.prodejnost * 10} barva={skala(a.prodejnost * 10, 60, 30, false)} zprava={`${a.prodejnost} / 10`} />
@@ -1326,7 +1410,10 @@ export default function App() {
           </Karta>
 
           <Karta>
-            <h3 className="mb-2 text-sm font-bold text-white">Makro USA a město</h3>
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-white">
+              <span className="inline-block h-3.5 w-1 rounded bg-rose-400" />
+              Makro USA a město
+            </h3>
             <div className="grid grid-cols-2 gap-1.5 text-sm">
               <Udaj label="HDP růst" hodnota={`${hra.macro.hdpRust} %`} barva={skala(hra.macro.hdpRust, 1, 2, true)} />
               <Udaj label="Inflace" hodnota={`${hra.macro.inflace} %`} barva={skala(hra.macro.inflace, 5, 3, false)} />
