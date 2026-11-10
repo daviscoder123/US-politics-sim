@@ -3416,6 +3416,62 @@ function systemovyPrompt(s) {
 
 const MAX_AKCI_V_PLANU = 6;
 
+/**
+ * Opraví JSON useknutý limitem tokenů: postupně ořezává konec, dovírá
+ * nedokončené řetězce a závorky. Vrací rozparsovaný objekt, nebo null.
+ */
+function opravUseknutyJson(src) {
+  /** Dovře nedokončené řetězce a závorky (jednoduchý průchod bez rekurze). */
+  const zavriStruktury = vstup => {
+    let out = "";
+    let inStr = false;
+    let esc = false;
+    const stack = [];
+    for (const ch of vstup) {
+      if (esc) {
+        esc = false;
+        out += ch;
+        continue;
+      }
+      if (ch === "\\") {
+        esc = true;
+        out += ch;
+        continue;
+      }
+      if (ch === "\u0022") {
+        inStr = !inStr;
+        out += ch;
+        continue;
+      }
+      if (!inStr) {
+        if (ch === "{") stack.push("}");else if (ch === "[") stack.push("]");else if ((ch === "}" || ch === "]") && stack.length) stack.pop();
+      }
+      out += ch;
+    }
+    if (esc) out = out.slice(0, -1);
+    if (inStr) out += "\"";
+    while (stack.length) out += stack.pop();
+    return out;
+  };
+  let s = src.trim();
+  for (let pokus = 0; pokus < 200 && s.length > 1; pokus++) {
+    try {
+      return JSON.parse(s);
+    } catch {
+      /* opravíme a zkusíme znovu */
+    }
+    const zavrena = zavriStruktury(s);
+    try {
+      return JSON.parse(zavrena);
+    } catch {
+      /* odřízneme poslední neúplný prvek */
+    }
+    const carka = zavrena.lastIndexOf(",");
+    s = carka > 0 ? zavrena.slice(0, carka) : zavrena.slice(0, -1);
+  }
+  return null;
+}
+
 /** Odstraní markdown ohraničení a vrátí první JSON objekt v textu. */
 function extrahujJson(text) {
   let t = text.trim();
@@ -3488,6 +3544,22 @@ function parsujPlan(text, s) {
   nastavKontextUrovne(s.funkce.uroven);
   const json = extrahujJson(text);
   if (!json) {
+    /* Herní mistr občas odpoví v rozhovoru čistým vyprávěním bez JSON obálky.
+     * Takovou odpověď přijmeme jako konverzační plán (jen reci, žádné akce);
+     * prázdná odpověď zůstává chybou. */
+    const volnyText = text.trim().slice(0, 1000);
+    if (volnyText) {
+      return {
+        ok: true,
+        plan: {
+          reci: volnyText,
+          akce: [],
+          udalost: null
+        },
+        chyby: [],
+        vyrazeno: []
+      };
+    }
     return {
       ok: false,
       plan: null,
@@ -3498,13 +3570,35 @@ function parsujPlan(text, s) {
   let surovina;
   try {
     surovina = JSON.parse(json);
-  } catch (e) {
-    return {
-      ok: false,
-      plan: null,
-      chyby: [`JSON odpovědi AI je neplatný: ${e.message}`],
-      vyrazeno: []
-    };
+  } catch {
+    /* Odpověď mohla být useknuta limitem tokenů — pokusíme se JSON opravit
+     * (dovyředit řetězce a závorky). Pokud ani to nevyjde, vytáhneme alespoň
+     * vyprávění (reci) a zbytek odpovíme jako konverzační plán. */
+    const opraveno = opravUseknutyJson(json);
+    if (opraveno !== null) {
+      surovina = opraveno;
+    } else {
+      const reciVyraz = /"reci"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(json);
+      if (reciVyraz) {
+        const text = reciVyraz[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\").trim().slice(0, 1000);
+        if (text) return {
+          ok: true,
+          plan: {
+            reci: text,
+            akce: [],
+            udalost: null
+          },
+          chyby: [],
+          vyrazeno: []
+        };
+      }
+      return {
+        ok: false,
+        plan: null,
+        chyby: ["JSON odpovědi AI je neplatný."],
+        vyrazeno: []
+      };
+    }
   }
   if (typeof surovina !== "object" || surovina === null) {
     return {
@@ -4455,12 +4549,12 @@ function Pruh({
   })));
 }
 function Karta({
-  deti,
+  children,
   className
 }) {
   return /*#__PURE__*/React.createElement("div", {
     className: `rounded-2xl border border-[#4d3b1d]/70 bg-[#2a2013]/70 p-4 shadow-lg ${className ?? ""}`
-  }, deti);
+  }, children);
 }
 function Udaj({
   label,
@@ -4926,7 +5020,7 @@ function App() {
           model: ai.model,
           messages: zpravy,
           temperature: 0.6,
-          max_tokens: 900
+          max_tokens: 1400
         })
       });
       if (!res.ok) {
