@@ -1,4 +1,4 @@
-# Politický simulátor USA
+# Dračí doupě USA — politický simulátor
 
 Dlouhodobý kariérní simulátor americké politiky: cesta od individua (např. zakladatele firmy)
 přes komunální a exekutivní funkce až po prezidentský úřad. Hra je primárně ovládána AI chatem
