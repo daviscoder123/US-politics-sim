@@ -36,6 +36,23 @@ test("systemovyPrompt obsahuje katalog akcí, pravidla AP a schéma JSON", () =>
   assert.ok(p.includes("pokladna"), "uvádí povolené klíče dopadů");
 });
 
+test("systemovyPrompt obsahuje personu herního mistra a režim rozhovoru", () => {
+  const s = novaHra();
+  const p = systemovyPrompt(s);
+  assert.ok(p.includes("Herní mistr"), "prompt mluví jako herní mistr");
+  assert.ok(p.includes("ROZHOVOR"), "definuje režim rozhovoru");
+  assert.ok(p.includes("ZÁMĚR"), "definuje režim záměru");
+  assert.ok(p.includes("Dračí doupě"), "nese téma Dračího doupěte");
+});
+
+test("parsujPlan přijímá čistě vyprávěcí odpověď bez akcí (rozhovor s herním mistrem)", () => {
+  const s = novaHra();
+  const r = parsujPlan(JSON.stringify({ reci: "Vy sedíte v zákouřené kanceláři a listujete dopisy voličů.", akce: [] }), s);
+  assert.ok(r.ok, "rozhovor bez akcí je platný plán");
+  assert.equal(r.plan?.akce.length, 0);
+  assert.ok((r.plan?.reci ?? "").includes("Vy sedíte"));
+});
+
 test("stavProAi je kompaktní JSON s klíčovými poli", () => {
   const s = novaHra();
   const json = JSON.parse(stavProAi(s));
