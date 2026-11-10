@@ -9,6 +9,8 @@ import {
   dostupneAkce,
   vyhodnotBranci,
   hledejZakony,
+  hledejRealneZakony,
+  SCOTUS_SOUDCI,
   systemovyPrompt,
   stavProAi,
   parsujPlan,
@@ -243,6 +245,126 @@ const PARAM_SPEC: Record<string, PolozkaFormulare[]> = {
 };
 
 /* ============================================================
+ * Uživatelská vodítka: skupiny ručních akcí, návrhy záměrů
+ * a týdenní briefink — vše odvozeno ze stavu (deterministicky),
+ * aby hru vedla sama hra, nikoli pevný scénář.
+ * ============================================================ */
+
+const SKUPINA_AKCE: Record<string, string> = {
+  zalozit_vybor: "Finance a kampaň",
+  dar: "Finance a kampaň",
+  fundraiser: "Finance a kampaň",
+  reklama: "Finance a kampaň",
+  uplacek: "Finance a kampaň",
+  superpac_koordinace: "Finance a kampaň",
+  pruzkum: "Finance a kampaň",
+  networking: "Lidé a vztahy",
+  konverzace: "Lidé a vztahy",
+  stab: "Lidé a vztahy",
+  splnit_slib: "Lidé a vztahy",
+  projev: "Vystoupení a pověst",
+  tiskovka: "Vystoupení a pověst",
+  debata: "Vystoupení a pověst",
+  otisky_dveri: "Vystoupení a pověst",
+  filantropie: "Vystoupení a pověst",
+  skoleni: "Rozvoj",
+  prace_na_podniku: "Rozvoj",
+  rozpocet_mesta: "Správa a úřad",
+  zonace: "Správa a úřad",
+  federalni_rozpocet: "Správa a úřad",
+  zakon: "Správa a úřad",
+  exekutivni_prikaz: "Správa a úřad",
+  compliance_audit: "Správa a úřad",
+};
+
+const PORADI_SKUPIN = ["Finance a kampaň", "Lidé a vztahy", "Vystoupení a pověst", "Rozvoj", "Správa a úřad", "Ostatní"];
+
+const NAZVY_ZAVODU: Record<string, string> = {
+  obecni: "obecní",
+  kongresove: "kongresové",
+  gubernatorske: "gubernatorská",
+  prezidentske: "prezidentská",
+};
+
+const NAZVY_NAKLONU: Record<string, string> = {
+  progresivni: "progresivní",
+  bipartitni: "bipartitní",
+  konzervativni: "konzervativní",
+};
+
+function skupinaAkce(id: string): string {
+  return SKUPINA_AKCE[id] ?? "Ostatní";
+}
+
+/** Návrhy záměrů odvozené ze stavu — vodítko pro první kroky. */
+function navrhyZameru(s: GameState): string[] {
+  const navrhy: string[] = [];
+  if (!s.finance.vyborZalozen) {
+    navrhy.push("Založ volební výbor a připrav legální financování kampaně.");
+  } else if (s.finance.pokladnaKampane < 25_000) {
+    navrhy.push("Pořádám fundraiser a zajisti první dary pod limity FEC.");
+  }
+  if (s.funkce.uroven === "outsider" && s.postava.atributy.znamostLokal < 25) {
+    navrhy.push("Zvedni mi známost ve městě — projev a obcházení dveří.");
+  }
+  const slib = s.sliby.find((x) => x.stav === "v_progressu" && x.lhutaKolo - s.kolo <= 8);
+  if (slib) {
+    navrhy.push(`Blíží se lhůta slibu „${slib.text}“ — pomoz mi jej splnit.`);
+  }
+  navrhy.push("Co bys mi doporučil tento týden? Zhodnoť moje silné a slabé stránky.");
+  return navrhy.slice(0, 3);
+}
+
+interface Briefink {
+  titulek: string;
+  text: string;
+  zamer: string | null;
+}
+
+/** Týdenní briefink štábu odvozený ze stavu — hra sama vede hráče. */
+function sestavBriefinky(s: GameState, brance: { splneno: boolean; chybejici: string[] } | null): Briefink[] {
+  const out: Briefink[] = [];
+  if (s.pravni.vysetrovani.length > 0) {
+    const v = s.pravni.vysetrovani[0];
+    out.push({
+      titulek: "Právní riziko",
+      text: `Probíhá vyšetřování (${v.tema}); každým kolem hrozí eskalace.`,
+      zamer: "Jak minimalizovat právní riziko a co v této situaci nedělat?",
+    });
+  }
+  if (!s.finance.vyborZalozen && s.finance.pokladnaKampane > 0) {
+    out.push({
+      titulek: "Volební výbor",
+      text: "Přijímáte peníze bez registrovaného výboru — FEC hrozí auditem.",
+      zamer: "Založ volební výbor a srovnej financování s legislativou FEC.",
+    });
+  }
+  if (s.beziKampan.typZavodu) {
+    out.push({
+      titulek: "Kampaň",
+      text: `Běží ${NAZVY_ZAVODU[s.beziKampan.typZavodu] ?? s.beziKampan.typZavodu} kampaň; primárky přicházejí v týdnu 24 a volby v týdnu 45.`,
+      zamer: "Zvyš moje šance ve volbách: rozjeď reklamu a veřejná vystoupení.",
+    });
+  }
+  const slib = s.sliby.find((x) => x.stav === "v_progressu" && x.lhutaKolo - s.kolo <= 8);
+  if (slib) {
+    out.push({
+      titulek: "Slib v lhůtě",
+      text: `„${slib.text}“ — lhůta vyprší v kole ${slib.lhutaKolo}.`,
+      zamer: `Pomoz mi splnit slib „${slib.text}“ dřív, než vyprší lhůta.`,
+    });
+  }
+  if (brance && !brance.splneno && out.length < 3) {
+    out.push({
+      titulek: "Kariérní brance",
+      text: `Chybí: ${brance.chybejici.join("; ")}.`,
+      zamer: "Jak nejlépe splnit kariérní branci v následujících týdnech?",
+    });
+  }
+  return out.slice(0, 3);
+}
+
+/* ============================================================
  * Malé komponenty
  * ============================================================ */
 
@@ -408,6 +530,15 @@ function Prolog({ onStart }: { onStart: (p: { jmeno: string; vek: number; archet
       >
         Začít kariéru
       </button>
+
+      <Karta className="mt-4 p-4">
+        <h3 className="mb-2 text-sm font-bold text-white">Jak se hraje</h3>
+        <ol className="list-decimal space-y-1.5 pl-5 text-xs text-slate-300">
+          <li>Formulujte záměr přirozeným jazykem („obejdu okres, navrhnu daňovou úlevu“) — přeloží ho AI do konkrétních akcí. Bez klíče fungují ruční akce i tak.</li>
+          <li>Každá akce stojí body politické kapitálu (AP). „Stůl štábu“ vždy doporučí, co je aktuálně nejnaléhavější.</li>
+          <li>Čas plyne tlačítkem v hlavičce — týden dospěje, engine vyhodnotí důsledky a vrátí strukturovaný souhrn.</li>
+        </ol>
+      </Karta>
     </div>
   );
 }
@@ -506,6 +637,7 @@ interface ChatZprava {
   akce?: ProvedenaAkceVChatu[];
   varovani?: string[];
   poznamka?: string | null;
+  seznam?: string[];
 }
 
 interface AiNastaveni {
@@ -532,6 +664,7 @@ export default function App() {
   const [formular, setFormular] = useState<Record<string, string>>({});
   const [volebniData, setVolebniData] = useState<VolebniData | null>(null);
   const [hledani, setHledani] = useState("");
+  const [hledaniHistorie, setHledaniHistorie] = useState("");
   const konecChatu = useRef<HTMLDivElement | null>(null);
 
   /* Načtení uložené hry a nastavení AI */
@@ -752,7 +885,11 @@ export default function App() {
     setHra(ns);
     setChat((c) => [
       ...c,
-      { role: "system", text: `Týden ${souhrn.tyden} roku ${souhrn.rok} skončil. ${souhrn.zpravy.join(" ") || "Klidný týden."}` },
+      {
+        role: "system",
+        text: `Týden ${souhrn.tyden} roku ${souhrn.rok} skončil — přehled událostí:`,
+        seznam: souhrn.zpravy.length > 0 ? souhrn.zpravy : ["Klidný týden bez zásadních událostí."],
+      },
     ]);
     if (souhrn.volbyProbehly) {
       const volbyDenik = [...ns.denik].reverse().find((e) => e.typ === "volby");
@@ -772,6 +909,9 @@ export default function App() {
   const akce = useMemo(() => (hra ? dostupneAkce(hra.funkce.uroven) : []), [hra]);
   const brance = useMemo(() => (hra ? vyhodnotBranci(hra) : null), [hra]);
   const zakony = useMemo(() => hledejZakony(hledani).slice(0, 40), [hledani]);
+  const historickeZakony = useMemo(() => hledejRealneZakony(hledaniHistorie), [hledaniHistorie]);
+  const navrhy = useMemo(() => (hra ? navrhyZameru(hra) : []), [hra]);
+  const briefinkyStavu = useMemo(() => (hra ? sestavBriefinky(hra, brance) : []), [hra, brance]);
 
   if (!hra) {
     return (
@@ -859,6 +999,29 @@ export default function App() {
       <main className="mx-auto mt-4 grid max-w-6xl grid-cols-1 gap-4 px-4 lg:grid-cols-3">
         {/* Hlavní panel: chat se štábem */}
         <section className="lg:col-span-2">
+          {briefinkyStavu.length > 0 && (
+            <Karta className="mb-3 p-4">
+              <h3 className="mb-2 text-sm font-bold text-white">Stůl štábu — co řešit tento týden</h3>
+              <div className="space-y-2">
+                {briefinkyStavu.map((b) => (
+                  <div key={b.titulek} className="flex flex-col gap-1.5 rounded-lg bg-slate-900/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <span className="mr-2 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-200">{b.titulek}</span>
+                      <span className="text-xs text-slate-300">{b.text}</span>
+                    </div>
+                    {b.zamer && (
+                      <button
+                        onClick={() => setVstup(b.zamer as string)}
+                        className="shrink-0 rounded-lg border border-emerald-500/60 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/10"
+                      >
+                        Zapsat do chatu
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Karta>
+          )}
           <Karta className="flex h-[32rem] flex-col p-0">
             <div className="flex-1 space-y-3 overflow-y-auto p-4">
               {chat.map((m, i) => (
@@ -892,6 +1055,15 @@ export default function App() {
                       </ul>
                     )}
                     {m.poznamka && <p className="mt-1 text-[11px] text-slate-400">{m.poznamka}</p>}
+                    {m.seznam && m.seznam.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {m.seznam.map((z, j) => (
+                          <li key={j} className="rounded-lg bg-slate-900/60 px-2 py-1 text-xs text-slate-300">
+                            • {z}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
               ))}
@@ -903,6 +1075,20 @@ export default function App() {
               <div ref={konecChatu} />
             </div>
             <div className="border-t border-slate-700 p-3">
+              {chat.filter((m) => m.role === "hrac").length === 0 && navrhy.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {navrhy.map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setVstup(n)}
+                      className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-[11px] text-slate-300 transition-colors hover:border-emerald-400 hover:text-white"
+                      title="Kliknutím vyplníte záměr do pole níže"
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex gap-2">
                 <input
                   className="flex-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-sm text-white focus:border-emerald-400 focus:outline-none"
@@ -930,27 +1116,38 @@ export default function App() {
             </div>
           </Karta>
 
-          {/* Ruční akce — sekundární ovládání */}
+          {/* Ruční akce — sekundární ovládání, seskupené dle oblastí */}
           <details className="mt-4 rounded-xl border border-slate-700 bg-slate-800/70 p-4">
             <summary className="cursor-pointer text-sm font-bold text-white">Ruční akce (bez AI)</summary>
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {akce.map((def) => {
-                const zaostava = hra.ap < def.ap;
+            <div className="mt-3 space-y-4">
+              {PORADI_SKUPIN.map((skupina) => {
+                const defsSkupiny = akce.filter((def) => skupinaAkce(def.id) === skupina);
+                if (defsSkupiny.length === 0) return null;
                 return (
-                  <button
-                    key={def.id}
-                    disabled={zaostava}
-                    onClick={() => otevriAkci(def.id)}
-                    className={`rounded-lg border p-3 text-left transition-colors ${
-                      zaostava ? "border-slate-800 bg-slate-900/50 opacity-50" : "border-slate-700 bg-slate-900/60 hover:border-emerald-500"
-                    }`}
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-sm font-bold text-white">{def.nazev}</span>
-                      <span className="shrink-0 rounded-full bg-sky-900/70 px-2 py-0.5 text-[11px] font-bold text-sky-200">{def.ap} AP</span>
+                  <div key={skupina}>
+                    <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">{skupina}</h4>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {defsSkupiny.map((def) => {
+                        const zaostava = hra.ap < def.ap;
+                        return (
+                          <button
+                            key={def.id}
+                            disabled={zaostava}
+                            onClick={() => otevriAkci(def.id)}
+                            className={`rounded-lg border p-3 text-left transition-colors ${
+                              zaostava ? "border-slate-800 bg-slate-900/50 opacity-50" : "border-slate-700 bg-slate-900/60 hover:border-emerald-500"
+                            }`}
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="text-sm font-bold text-white">{def.nazev}</span>
+                              <span className="shrink-0 rounded-full bg-sky-900/70 px-2 py-0.5 text-[11px] font-bold text-sky-200">{def.ap} AP</span>
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-slate-400">{def.popis}</p>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <p className="mt-0.5 text-[11px] text-slate-400">{def.popis}</p>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -977,6 +1174,59 @@ export default function App() {
                       <p className="mt-2 text-[11px] text-slate-300">{z.shrnuti}</p>
                       <p className="mt-1 text-[11px] text-amber-200">Ve hře: {z.efektyVeHre.join("; ")}</p>
                     </details>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="mb-1 text-sm font-bold text-white">Historické zákony USA</h3>
+                <p className="mb-2 text-[11px] text-slate-400">Skutečné zákony se skutečnými výsledky hlasování — jako inspirace pro vaši legislativu. Údaje ověřeny vůči Kongresu a veřejným zdrojům.</p>
+                <input
+                  className="mb-2 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white focus:border-emerald-400 focus:outline-none"
+                  placeholder="Hledat v historii (např. „čipy“, „daně“, „2017“)…"
+                  value={hledaniHistorie}
+                  onChange={(e) => setHledaniHistorie(e.target.value)}
+                />
+                <div className="max-h-72 space-y-2 overflow-y-auto">
+                  {historickeZakony.length === 0 && <p className="text-[11px] text-slate-400">Nic nenalezeno — zkuste jiné slovo, diakritika nevadí.</p>}
+                  {historickeZakony.map((z) => (
+                    <details key={z.id} className="rounded-lg bg-slate-900/60 px-3 py-2">
+                      <summary className="cursor-pointer text-xs font-semibold text-white">
+                        {z.rokSchvaleni} — {z.titul}{" "}
+                        <span className="ml-1 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-bold text-slate-200">{NAZVY_NAKLONU[z.ideologickySklon] ?? z.ideologickySklon}</span>
+                      </summary>
+                      <p className="mt-2 text-[11px] text-slate-300">{z.shrnuti}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {z.oficTitul} · náklady {z.nakladyMldUSD.toLocaleString("cs-CZ")} mld. $ · Senát {z.senatHlasy} · Sněmovna {z.snemovnaHlasy}
+                      </p>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-slate-400">
+                        {z.klicovaUstanoveni.map((u, i) => (
+                          <li key={i}>{u}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-1 text-[11px] text-amber-200/80">{z.dopad}</p>
+                      <p className="mt-1 text-[10px] text-slate-500">Zdroje: {z.zdroje.join(" · ")}</p>
+                    </details>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="mb-2 text-sm font-bold text-white">Nejvyšší soud USA (SCOTUS)</h3>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {SCOTUS_SOUDCI.map((s) => (
+                    <div key={s.jmeno} className="rounded-lg bg-slate-900/60 px-3 py-2">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-xs font-semibold text-white">{s.jmeno}</span>
+                        <span className="shrink-0 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-bold text-slate-200">
+                          {s.ideologie === "konzervativni" ? "konzervativní" : "liberální"}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[10px] text-slate-400">
+                        {s.filozofie === "textualismus_a_originalismus" ? "textualismus/originalismus" : "živá ústava/pragmatismus"} · {s.jmenovan}
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-500">{s.bio}</p>
+                    </div>
                   ))}
                 </div>
               </div>
