@@ -83,10 +83,28 @@ kaskáda), ekonomika (směr Okun/Phillips, rating, akumulace dluhu), volby (sou�
 favorit vyhrává, vyrovnaný zápas ≈ 50 %, primárky a delegáti), sociální brána,
 AP rozpočet akcí a volební scénáře end-to-end.
 
+## Aplikace (Milník 2)
+
+React prototyp UI ve `app/` (české rozhraní, temný design, responzivní):
+
+- `App.tsx` — prolog (jméno, věk, domovský stát, seed, 12 karet archetypů), hlavička
+  s identitou postavy, penězi a časem (kolo/týden/rok, AP jako tečky), novinový pás
+  zpětné vazby, panel kariérních brancí s chybějícími prahy, makro dashboard USA,
+  záložky Akce / Inbox kola / Kodex zákonů / Sliby a lidé, dlaždicová mapa USA
+  (51 států + DC, 538 volitelů) v modálním okně volební noci, osobní ukazatele
+  s pravidlem „zelená vždy dobře pro vás", autosave do localStorage.
+- Importuje výhradně z `engine/engine-bundle.ts` — sloučený engine
+  (generovaný z modulů `engine/src/`; replay bitově identický, ověřeno testem
+  `test/bundle.test.ts`).
+- Spuštění lokálně (Node ≥ 20):
+  `cd app && npm install && npm run dev` (Vite + React 18).
+- Grafické principy: viz `design/grafika-inspirace.md` (Prime Minister UK Politics
+  Sim a ReLife).
+
 ## Plán milníků
 
 1. Deterministický rules engine + testy (tento repozitář) — hotovo.
-2. Prolog a React prototyp UI (AI chat, dashboard, inbox krizových karet) — viz `design/grafika-inspirace.md`.
+2. Prolog a React prototyp UI — hotovo (`app/`, `engine/engine-bundle.ts`, 80 testů).
 3. Napojení Mistral API (AI generuje scénáře; engine je validuje přes `validateAiEventProposal`).
 4. PWA obal, ukládání a načítání her, replay.
 5. Kalibrace obtížnosti a balancování kariérních brancí.

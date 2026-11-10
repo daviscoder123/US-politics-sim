@@ -53,6 +53,45 @@ Nejdůležitější tři čísla vždy na očích: osobní rating (u nás podíl
 `pruzkum`), státní finance (dluh a rating z `Macro`) a souhlas voličů
 (spokojenost). Mobilní zobrazení je primární (PWA), desktop vedlejší.
 
+## Druhá inspirace — ReLife Life Simulator (reimcode)
+
+Reference: https://play.google.com/store/apps/details?id=com.reimer.relife
+(rozhodovací simulátor života „rok za rokem"; 50 tis.+ stažení, hodnocení 4,7).
+
+### 1. Obrazovka roku: věk + příjem + stav jako přehledný dashboard
+ReLife staví hlavní obrazovku na kartě postavy: jméno, věk a peníze vždy
+nahoře, pod nimi rozhodovací volby daného roku. Přebíráme: na herní
+obrazovce je vždy vidět kdo jste (jméno, funkce), kolik máte peněz
+(majetek + pokladna kampaně) a kolik je herního času (kolo/týden/rok).
+
+### 2. Volby jako karty s jasnými trade-offy
+Každý rok přináší karty rozhodnutí s okamžitými i dlouhodobými důsledky.
+Náš ekvivalent: karty akcí z `dostupneAkce` + karty událostí z inboxu;
+každá karta ukazuje cenu v AP a hlavní efekt, trade-off je součást textu.
+
+### 3. Statistiky postavy jako pruhy
+ReLife zobrazuje vlastnosti (zdraví, štěstí, inteligenci, reputaci)
+jako pruhy. Přebíráme formát pruhů pro známost L/S/N, sociální kapitál,
+integritu, etiku a rizika — barva dle pravidla „dobře/zle pro vás".
+
+### 4. Novinky ze světa ovlivňují postavu
+Změny ekonomiky a události ve světě zasahují do herního prostředí
+zpravodajstvím na obrazovce. Náš ekvivalent: novinové titulky (fiktivní
+„Lakeside Chronicle") reagují na makro ticky a skandály.
+
+### 5. Zanechání odkazu / bilance kapitoly
+ReLife na konci života ukazuje bilanci (úspěchy, majetek, vztahy).
+Přebíráme: po prohrách i odsouzení zobrazíme „bilanci kapitoly"
+a nabídneme pokračování — stínová kariéra nikdy nekončí definitivně.
+
+### 6. Poučení z kritiky ReLife (Reddit, recenze)
+Hráči vytýkali ReLife sterilní, monochromatické UI bez barev a bez
+identity postavy („korporátní checkbox"). Závěr pro nás: nikoli čistě
+šedivý formulářový vzhled — karty mají barevné akcenty, postava má
+vizuální identitu (monogram, barva strany), typografie má hierarchii
+(velká čísla, titulky, perexy). Zároveň nezopakujeme jejich chybě
+malých tlačítek: primární akce jsou velké, minimálně 44 px na dotek.
+
 ## Co jsme nechtěli přebírat
 
 - Mikrotransakce a energy systém — hra je osobní, bez monetizace.
