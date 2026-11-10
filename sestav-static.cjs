@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 /**
  * sestav-static.cjs — generuje statický web pro GitHub Pages bez bundleru.
- * Výstup: site/app.js (engine + UI v jednom souboru, bez ESM importů Reactu)
- *        site/index.html (React/ReactDOM/Babel/Tailwind z CDN, transform TSX
- *        v prohlížeči pomocí @babel/standalone).
  *
- * Proč bez Vite: v uzavřeném prostředí není dostupný npm install. Transform
- * v prohlížeči je pro prototyp dostatečně rychlý (~1 s) a jediný soubor
- * app.js se načítá až po stažení.
+ * Výstup:
+ *   site/app.js                  — engine + UI, PŘELOŽENÉ (plain JS, žádný JSX/TS
+ *                                  v prohlížeči, žádný runtime Babel)
+ *   site/react.production.min.js — vestavěný React (bez CDN)
+ *   site/react-dom.production.min.js — vestavěný ReactDOM (bez CDN)
+ *   site/index.html / 404.html   — načítací stránka s viditelnou diagnostikou
+ *
+ * Proč bez Vite/npm: v uzavřeném prostředí není dostupný npm install.
+ * Vestavěný React a přeložený app.js odstraňují závislost na unpkg — jediné
+ * externí CDN zůstává Tailwind (s náhradní adresou a varováním při výpadku).
  */
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 
 const root = __dirname;
 const cil = path.join(root, "site");
@@ -29,7 +34,7 @@ if (app.includes("export default")) {
   throw new Error("V app těle zbyl neočekávaný export default.");
 }
 
-/* 3) Slepení + spouštěč */
+/* 3) Slepení + spouštěč (zdroj v TSX — přeloží se v kroku 4) */
 const hlavicka = `/* Vygenerováno sestav-static.cjs — neupravovat ručně. */
 const { useEffect, useMemo, useRef, useState } = React;
 `;
@@ -40,9 +45,41 @@ window.__render = function () {
   ReactDOM.createRoot(rootEl).render(React.createElement(App));
 };
 `;
-fs.writeFileSync(path.join(cil, "app.js"), hlavicka + bundle + "\n" + app + spousteni);
+const tsxZdroj = hlavicka + bundle + "\n" + app + spousteni;
 
-/* 4) index.html */
+/* 4) Překlad TSX -> plain JS pomocí @babel/standalone (build-time).
+ *    V prohlížeči už žádný Babel není — jen hotový JS.
+ *    Vestavěnou kopii drží vendor/babel.min.js; chybí-li, stáhne se jednou. */
+const babelCesta = path.join(root, "vendor/babel.min.js");
+if (!fs.existsSync(babelCesta)) {
+  const https = require("https");
+  const zaloha = fs.createWriteStream(babelCesta);
+  console.log("Stahuji @babel/standalone do vendor/babel.min.js…");
+  https.get("https://unpkg.com/@babel/standalone@7.26.4/babel.min.js", (res) => {
+    if (res.statusCode !== 200) throw new Error("Stažení Babel selhalo: HTTP " + res.statusCode);
+    res.pipe(zaloha);
+  });
+  throw new Error("Babel stažen — spusťte sestav-static.cjs znovu.");
+}
+const babelZdroj = fs.readFileSync(babelCesta, "utf8");
+const babelKontext = { console, window: {}, self: {}, global: {}, setTimeout: () => {} };
+vm.createContext(babelKontext);
+vm.runInContext(babelZdroj, babelKontext, { timeout: 60000 });
+const Babel = babelKontext.Babel || babelKontext.window.Babel;
+if (!Babel || typeof Babel.transform !== "function") {
+  throw new Error("Vestavěný Babel se nepodařilo inicializovat.");
+}
+const prelozeno = Babel.transform(tsxZdroj, {
+  filename: "app.tsx",
+  presets: [["react", { runtime: "classic" }], "typescript"],
+});
+fs.writeFileSync(path.join(cil, "app.js"), prelozeno.code);
+
+/* 5) Vestavěný React a ReactDOM do site/ (bez CDN) */
+fs.copyFileSync(path.join(root, "vendor/react.production.min.js"), path.join(cil, "react.production.min.js"));
+fs.copyFileSync(path.join(root, "vendor/react-dom.production.min.js"), path.join(cil, "react-dom.production.min.js"));
+
+/* 6) index.html — vše lokálně kromě Tailwind (s fallbackem a diagnostikou) */
 const index = `<!doctype html>
 <html lang="cs">
   <head>
@@ -51,16 +88,28 @@ const index = `<!doctype html>
     <meta name="theme-color" content="#020617" />
     <meta name="description" content="Politický simulátor USA — od zakladatele firmy k Bílému domu. Hratelné bez registrace; volitelně s API klíčem Mistral AI." />
     <title>Politický simulátor USA</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+    <script>
+      /* Tailwind CDN s náhradní adresou; výpadek stylů hru nepřeruší. */
+      (function () {
+        var n = document.createElement("script");
+        n.src = "https://cdn.tailwindcss.com";
+        n.onerror = function () {
+          var f = document.createElement("script");
+          f.src = "https://cdn.jsdelivr.net/npm/tailwindcss-cdn@0.0.1/cdn.min.js";
+          document.head.appendChild(f);
+        };
+        document.head.appendChild(n);
+      })();
+    </script>
+    <script src="./react.production.min.js"></script>
+    <script src="./react-dom.production.min.js"></script>
     <style>
       body { margin: 0; background: #020617; color: #e2e8f0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
       #nacitani { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
       #nacitani .pruh { width: 200px; height: 6px; border-radius: 9999px; background: #1e293b; overflow: hidden; }
       #nacitani .vypln { height: 100%; width: 40%; border-radius: 9999px; background: linear-gradient(90deg, #10b981, #14b8a6); animation: nacitani 1.1s ease-in-out infinite; }
       @keyframes nacitani { 0% { transform: translateX(-100%);} 100% { transform: translateX(350%);} }
+      #diagnostika { display: none; position: fixed; left: 12px; bottom: 12px; right: 12px; max-width: 560px; margin: 0 auto; padding: 12px 16px; border-radius: 12px; background: #450a0a; color: #fecaca; font-size: 13px; line-height: 1.5; z-index: 50; }
     </style>
   </head>
   <body>
@@ -71,25 +120,29 @@ const index = `<!doctype html>
         <div style="font-size: 12px; color: #94a3b8;">Sestavuji štáb…</div>
       </div>
     </div>
+    <div id="diagnostika"></div>
     <script>
-      fetch("./app.js")
-        .then(function (r) {
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          return r.text();
-        })
-        .then(function (src) {
-          var vysledek = Babel.transform(src, {
-            filename: "app.tsx",
-            presets: [["react", { runtime: "classic" }], "typescript"],
-          });
-          var script = document.createElement("script");
-          script.text = vysledek.code + "\\nwindow.__render();";
-          document.body.appendChild(script);
-        })
-        .catch(function (e) {
-          var root = document.getElementById("root");
-          root.textContent = "Hru se nepodařilo načíst: " + e.message;
-        });
+      function ukazChybu(txt) {
+        var d = document.getElementById("diagnostika");
+        if (!d) return;
+        d.style.display = "block";
+        d.textContent = txt;
+      }
+      window.addEventListener("error", function (e) {
+        ukazChybu("Běh hry narazil na chybu: " + (e.message || "neznámá chyba"));
+      });
+    </script>
+    <script src="./app.js" onerror="ukazChybu('Nepodařilo se stáhnout soubor hry (app.js). Zkuste obnovit stránku.')"></script>
+    <script>
+      if (typeof window.__render === "function") {
+        try {
+          window.__render();
+        } catch (e) {
+          ukazChybu("Hra se nespustila: " + (e && e.message ? e.message : e));
+        }
+      } else {
+        ukazChybu("Hra se nenačetla — chybí přeložený soubor hry. Zkuste obnovit stránku (Ctrl+Shift+R).");
+      }
     </script>
   </body>
 </html>
