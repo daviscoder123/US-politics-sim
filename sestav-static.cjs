@@ -51,15 +51,13 @@ const tsxZdroj = hlavicka + bundle + "\n" + app + spousteni;
  *    V prohlížeči už žádný Babel není — jen hotový JS.
  *    Vestavěnou kopii drží vendor/babel.min.js; chybí-li, stáhne se jednou. */
 const babelCesta = path.join(root, "vendor/babel.min.js");
-if (!fs.existsSync(babelCesta)) {
-  const https = require("https");
-  const zaloha = fs.createWriteStream(babelCesta);
+if (!fs.existsSync(babelCesta) || fs.statSync(babelCesta).size < 1000000) {
+  const { execSync } = require("child_process");
   console.log("Stahuji @babel/standalone do vendor/babel.min.js…");
-  https.get("https://unpkg.com/@babel/standalone@7.26.4/babel.min.js", (res) => {
-    if (res.statusCode !== 200) throw new Error("Stažení Babel selhalo: HTTP " + res.statusCode);
-    res.pipe(zaloha);
-  });
-  throw new Error("Babel stažen — spusťte sestav-static.cjs znovu.");
+  execSync('curl -sSfL "https://unpkg.com/@babel/standalone@7.26.4/babel.min.js" -o "' + babelCesta + '"', { stdio: "inherit", timeout: 120000 });
+}
+if (!fs.existsSync(babelCesta) || fs.statSync(babelCesta).size < 1000000) {
+  throw new Error("Babel se nepodařilo stáhnout ani najít ve vendor/babel.min.js.");
 }
 const babelZdroj = fs.readFileSync(babelCesta, "utf8");
 const babelKontext = { console, window: {}, self: {}, global: {}, setTimeout: () => {} };

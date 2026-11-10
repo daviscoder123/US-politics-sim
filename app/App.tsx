@@ -689,6 +689,7 @@ interface AiNastaveni {
 
 const KLIC_STORAGE_HRA = "politicky-sim-save";
 const KLIC_STORAGE_AI = "politicky-sim-ai";
+const KLIC_STORAGE_CHAT = "politicky-sim-chat";
 const MODELY = ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"];
 
 /* ============================================================
@@ -716,7 +717,22 @@ export default function App() {
       const ulozene = window.localStorage.getItem(KLIC_STORAGE_HRA);
       if (ulozene) {
         const s = JSON.parse(ulozene) as GameState;
-        if (s && s.saveVersion === 1) setHra(s);
+        if (s && s.saveVersion === 1) {
+          setHra(s);
+          /* Načtená hra bez uloženého chatu by nezobrazila nic —
+           * proto vždy existuje úvodní zpráva štábu. */
+          let ulozenyChat: ChatZprava[] | null = null;
+          try {
+            const c = window.localStorage.getItem(KLIC_STORAGE_CHAT);
+            if (c) {
+              const parsed = JSON.parse(c) as ChatZprava[];
+              if (Array.isArray(parsed) && parsed.length > 0) ulozenyChat = parsed;
+            }
+          } catch {
+            /* poškozené uložení chatu ignorujeme */
+          }
+          setChat(ulozenyChat ?? [{ role: "system", text: `Vítejte zpět, ${s.postava.jmeno}. Vaše kampaň byla obnovena z uložení. Napište, čeho chcete tento týden dosáhnout — štáb převede záměr do konkrétních akcí enginu.` }]);
+        }
       }
       const n = window.localStorage.getItem(KLIC_STORAGE_AI);
       if (n) setAi(JSON.parse(n) as AiNastaveni);
@@ -724,6 +740,16 @@ export default function App() {
       /* localStorage nedostupný — hra poběží bez uložení */
     }
   }, []);
+
+  /* Autosave chatu (posledních 60 zpráv) */
+  useEffect(() => {
+    if (chat.length === 0) return;
+    try {
+      window.localStorage.setItem(KLIC_STORAGE_CHAT, JSON.stringify(chat.slice(-60)));
+    } catch {
+      /* ignorujeme */
+    }
+  }, [chat]);
 
   /* Autosave */
   useEffect(() => {
@@ -772,6 +798,7 @@ export default function App() {
   function novaHra() {
     try {
       window.localStorage.removeItem(KLIC_STORAGE_HRA);
+      window.localStorage.removeItem(KLIC_STORAGE_CHAT);
     } catch {
       /* ignorujeme */
     }
@@ -796,6 +823,7 @@ export default function App() {
         const data = (await res.json()) as { data?: { id?: string }[] };
         const pocet = data.data?.length ?? 0;
         setStavKlice({ stav: "ok", zprava: `Klíč je platný — štáb odpovídá přes Mistral AI (${pocet} modelů k dispozici).` });
+        setChat((c) => [...c, { role: "system", text: "Štáb je připojen k Mistral AI. Napište, čeho chcete tento týden dosáhnout, a záměr se převede do herních akcí." }]);
       } else if (res.status === 401) {
         setStavKlice({ stav: "chyba", zprava: "Klíč není platný (401) — zkontrolujte správnost." });
       } else if (res.status === 429) {
@@ -1159,6 +1187,12 @@ export default function App() {
           )}
           <Karta className="flex h-[32rem] flex-col p-0">
             <div className="flex-1 space-y-3 overflow-y-auto p-4">
+              {chat.length === 0 && !ceka && (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+                  <p className="text-sm font-semibold text-slate-300">Štáb čeká na pokyn.</p>
+                  <p className="max-w-sm text-xs text-slate-500">Napište do pole níže, čeho chcete tento týden dosáhnout — například „Zajisti mi sponzory a zvedni známost“. Záměr se převede do herních akcí.</p>
+                </div>
+              )}
               {chat.map((m, i) => (
                 <div key={i} className={m.role === "hrac" ? "flex justify-end" : "flex justify-start"}>
                   <div
