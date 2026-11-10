@@ -1573,3 +1573,1502 @@ export function simulateVseobecne(
     return { vyhral: detail.vyhral, share: detail.shareNarodni, typ, detail };
   }
   const shareZaklad = dvoucestnyShare(hrac, souper, m);
+  const sirka: Record<string, number> = { obecni: 0.06, kongresove: 0.045, gubernatorske: 0.035 };
+  const share = Math.max(0.01, Math.min(0.99, shareZaklad + rng.normal(0, sirka[typ] ?? 0.05)));
+  return { vyhral: share > 0.5, share, typ, detail: null };
+}
+
+export interface VysledekPrimariek {
+  postoupil: boolean; // prah 15 % + souboj o delegáty
+  share: number;
+  delegatiHrac: number;
+  delegatiSouper: number;
+}
+
+/**
+ * Primárky: proporcionální alokace delegátů s prahem 15 % a bonusem pro
+ * vítěze (+10 % delegátů) — zjednodušení pravidel DNC/RNC.
+ */
+export function simulatePrimarky(
+  hrac: KandidatProfil,
+  souper: KandidatProfil, // uvnitř strany
+  rng: Rng,
+  celkemDelegatu = 4000
+): VysledekPrimariek {
+  const shareZaklad = 0.5 + 0.010 * (hrac.znamost - souper.znamost) + 0.005 * (hrac.integrita - souper.integrita) - 0.004 * (hrac.prodejnost - souper.prodejnost) * 5;
+  const share = Math.max(0.02, Math.min(0.98, shareZaklad + rng.normal(0, 0.06)));
+
+  const prah = 0.15;
+  if (share < prah) {
+    return { postoupil: false, share, delegatiHrac: 0, delegatiSouper: celkemDelegatu };
+  }
+  if (share > 1 - prah) {
+    return { postoupil: true, share, delegatiHrac: celkemDelegatu, delegatiSouper: 0 };
+  }
+  // Bonus vítěze: 10 % delegátů navíc pro kandidáta s vyšším podílem.
+  let dHrac = Math.round(celkemDelegatu * share * 0.9);
+  let dSouper = Math.round(celkemDelegatu * (1 - share) * 0.9);
+  const bonus = Math.round(celkemDelegatu * 0.1);
+  if (share > 0.5) dHrac += bonus;
+  else dSouper += bonus;
+  const celkem = dHrac + dSouper;
+  dHrac += celkemDelegatu - celkem; // dorovnání součtu
+  return { postoupil: dHrac > dSouper, share, delegatiHrac: dHrac, delegatiSouper: dSouper };
+}
+
+/* ===== actions.ts ===== */
+/**
+ * actions.ts — katalog herních akcí. Každá akce má cenu v akčních bodech (AP),
+ * povolené úrovně úřadu, validaci (včetně právních varování) a aplikaci efektů.
+ * Volající orchestrace (game.ts) účtuje AP a zajišťuje deterministický Rng.
+ */
+
+export interface ParametryAkce {
+  npcId?: string;
+  slibText?: string;
+  castkaUSD?: number;
+  typDarce?: TypDarce;
+  volba?: "primarky" | "hlavni";
+  slibUrednihoAktu?: string | null;
+  pocetSvedku?: number;
+  koordinace?: boolean;
+  text?: string;
+  dovednost?: "diplomacie" | "retorika" | "finance" | "vyjednavani" | "medialnost";
+  tema?: "ekonomika" | "socialni" | "beznacnost" | "zdravotnictvi" | "infrastruktura";
+  vyrovnanost?: number; // −2..+2: restrikce vs. stimul
+  slibId?: string;
+}
+
+export interface VysledekAkce {
+  ok: boolean;
+  zprava: string;
+  varovani: string[];
+  apUctovano: number;
+}
+
+interface AkceDef {
+  id: string;
+  nazev: string;
+  ap: number;
+  urovne: OfficeLevel[]; // prázdné pole = všechny úrovně
+  popis: string;
+  over: (s: GameState, p: ParametryAkce) => { chyby: string[]; varovani: string[] };
+  apply: (s: GameState, rng: Rng, p: ParametryAkce) => string;
+}
+
+function zapisDoDeniku(s: GameState, typ: "akce" | "ekonomika", data: Record<string, unknown>): void {
+  s.denik.push({ kolo: s.kolo, typ, data });
+}
+
+/** Zaokrouhlení na 1 desetinné místo. */
+function r1(x: number): number {
+  return Math.round(x * 10) / 10;
+}
+
+export const AKCE: AkceDef[] = [
+  {
+    id: "prace_na_podniku",
+    nazev: "Práce na podniku",
+    ap: 1,
+    urovne: [],
+    popis: "Týden v podnikání: příjem, kontakty, malý růst známosti.",
+    over: () => ({ chyby: [], varovani: [] }),
+    apply: (s, rng) => {
+      const prijem = rng.int(5, 20) * 1_000;
+      s.postava.atributy.majetekUSD += prijem;
+      s.postava.atributy.znamostLokal = Math.min(100, r1(s.postava.atributy.znamostLokal + 0.2));
+      zapisDoDeniku(s, "ekonomika", { prijem });
+      return `Výdělek ${prijem.toLocaleString("en-US")} $; známost lokálně +0,2.`;
+    },
+  },
+  {
+    id: "networking",
+    nazev: "Networking",
+    ap: 1,
+    urovne: [],
+    popis: "Večer na recepcích: nové kontakty, pomalý růst sociálního kapitálu.",
+    over: () => ({ chyby: [], varovani: [] }),
+    apply: (s, rng) => {
+      const prirustek = rng.range(0.5, 1.5) + s.postava.dovednosti.diplomacie / 12;
+      s.postava.atributy.socialniKapital = Math.min(100, r1(s.postava.atributy.socialniKapital + prirustek));
+      return `Sociální kapitál +${r1(prirustek)}.`;
+    },
+  },
+  {
+    id: "filantropie",
+    nazev: "Filantropie",
+    ap: 2,
+    urovne: [],
+    popis: "Dar 50 000 $ na veřejnou věc: známost a integrita rostou, majetek klesá.",
+    over: (s) => {
+      if (s.postava.atributy.majetekUSD < 50_000) {
+        return { chyby: ["Nemáte dostatečný majetek (min. 50 000 $)."], varovani: [] };
+      }
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s) => {
+      s.postava.atributy.majetekUSD -= 50_000;
+      s.postava.atributy.znamostLokal = Math.min(100, r1(s.postava.atributy.znamostLokal + 1.5));
+      s.postava.atributy.integrita = Math.min(100, s.postava.atributy.integrita + 2);
+      return "Veřejný dar 50 000 $; známost lokálně +1,5, integrita +2.";
+    },
+  },
+  {
+    id: "projev",
+    nazev: "Veřejný projev",
+    ap: 1,
+    urovne: [],
+    popis: "Projev na místní akci; efekt dle rétoriky.",
+    over: () => ({ chyby: [], varovani: [] }),
+    apply: (s, rng) => {
+      const efekt = rng.range(0.3, 0.8) * (s.postava.dovednosti.retorika / 5);
+      s.postava.atributy.znamostLokal = Math.min(100, r1(s.postava.atributy.znamostLokal + efekt));
+      if (s.funkce.uroven === "starosta" || s.funkce.uroven === "radni") {
+        s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + efekt / 2));
+      }
+      return `Známost lokálně +${r1(efekt)}.`;
+    },
+  },
+  {
+    id: "skoleni",
+    nazev: "Školení",
+    ap: 2,
+    urovne: [],
+    popis: "Kurz za 10 000 $: +1 k vybrané dovednosti.",
+    over: (s, p) => {
+      if (!p.dovednost) return { chyby: ["Zvolte dovednost k tréninku."], varovani: [] };
+      if (s.postava.atributy.majetekUSD < 10_000) return { chyby: ["Nedostatečný majetek (10 000 $)."], varovani: [] };
+      if (s.postava.dovednosti[p.dovednost] >= 10) return { chyby: ["Dovednost již je na maximu (10)."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, _rng, p) => {
+      const d = p.dovednost!;
+      s.postava.atributy.majetekUSD -= 10_000;
+      s.postava.dovednosti[d] += 1;
+      return `Dovednost ${d} +1 (nyní ${s.postava.dovednosti[d]}).`;
+    },
+  },
+  {
+    id: "zalozit_vybor",
+    nazev: "Založit volební výbor",
+    ap: 1,
+    urovne: [],
+    popis: `Registrace kampaně (práh ${FEC_LIMITY.registracniPrag.toLocaleString("en-US")} $). Bez výboru je fundraising nezákonný.`,
+    over: (s) => {
+      if (s.finance.vyborZalozen) return { chyby: ["Výbor již je založen."], varovani: [] };
+      if (s.postava.atributy.majetekUSD < FEC_LIMITY.registracniPrag) {
+        return { chyby: [`Registrace vyžaduje ${FEC_LIMITY.registracniPrag.toLocaleString("en-US")} $.`], varovani: [] };
+      }
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s) => {
+      s.postava.atributy.majetekUSD -= FEC_LIMITY.registracniPrag;
+      s.finance.vyborZalozen = true;
+      zapisDoDeniku(s, "akce", { registrace: FEC_LIMITY.registracniPrag });
+      return "Volební výbor registrován. Nyní můžete shromažďovat legální dary." + citujZakony(["11-cfr-100-5"]);
+    },
+  },
+  {
+    id: "fundraiser",
+    nazev: "Fundraisering",
+    ap: 2,
+    urovne: [],
+    popis: "Malý dárský večer dle známosti a sociálního kapitálu.",
+    over: (s) => {
+      if (!s.finance.vyborZalozen) {
+        return {
+          chyby: [],
+          varovani: [
+            "Bez registrovaného výboru je shromažďování darů nezákonné — riziko FEC auditu prudce roste.",
+          ],
+        };
+      }
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, rng) => {
+      if (!s.finance.vyborZalozen) {
+        s.pravni.fecAuditRiziko += 12;
+        return "Přijali jste dary bez registrovaného výboru. FEC audit je otázkou času (+12 riziko)." + citujZakony(["11-cfr-100-5"]);
+      }
+      const zaklad = 400 + s.postava.atributy.znamostLokal * 80 + s.postava.atributy.socialniKapital * 30;
+      const vynos = Math.round(zaklad * rng.range(0.8, 1.4));
+      s.finance.pokladnaKampane += vynos;
+      s.postava.atributy.prodejnost = Math.min(10, r1(s.postava.atributy.prodejnost + 0.1));
+      zapisDoDeniku(s, "akce", { vynos });
+      return `Fundraisering vynesl ${vynos.toLocaleString("en-US")} $.`;
+    },
+  },
+  {
+    id: "dar",
+    nazev: "Přijmout dar",
+    ap: 1,
+    urovne: [],
+    popis: "Dar s plnou právní kontrolou FEC (limity, cizí peníze, quid pro quo).",
+    over: (s, p) => {
+      if (!p.castkaUSD || p.castkaUSD <= 0) return { chyby: ["Zadejte kladnou částku."], varovani: [] };
+      if (!s.finance.vyborZalozen) return { chyby: [], varovani: ["Dar bez výboru porušuje FECA — zvažte nejprve založit výbor."] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, rng, p) => {
+      const navrh: NavrhDaru = {
+        npcId: p.npcId ?? null,
+        typDarce: p.typDarce ?? "individual",
+        castkaUSD: p.castkaUSD!,
+        volba: p.volba ?? "hlavni",
+        slibUrednihoAktu: p.slibUrednihoAktu ?? null,
+        pocetSvedku: p.pocetSvedku ?? rng.int(0, 3),
+        koordinace: p.koordinace ?? false,
+      };
+      const kontrola = zkontrolujDar(s, navrh);
+      if (!kontrola.legalni) {
+        s.pravni.fecAuditRiziko += kontrola.fecAuditRiziko;
+        s.pravni.kriminalniRiziko += kontrola.kriminalniRiziko;
+        zapisDoDeniku(s, "pravni", { odmitnutyDar: p.castkaUSD, duvod: kontrola.duvod });
+        return `Dar odmítnut: ${kontrola.duvod ?? "nezákonný dar"}.` + citujZakony(kontrola.zakonIds);
+      }
+      s.finance.pokladnaKampane += navrh.castkaUSD;
+      s.pravni.fecAuditRiziko += kontrola.fecAuditRiziko;
+      s.pravni.kriminalniRiziko += kontrola.kriminalniRiziko;
+      const key = `${navrh.typDarce}-${navrh.volba}`;
+      s.finance.daryTentoCyklus[key] = (s.finance.daryTentoCyklus[key] ?? 0) + navrh.castkaUSD;
+      if (navrh.typDarce !== "self") {
+        s.postava.atributy.prodejnost = Math.min(10, r1(s.postava.atributy.prodejnost + 0.05));
+      }
+      zapisDoDeniku(s, "akce", { dar: navrh.castkaUSD, typDarce: navrh.typDarce });
+      const varovani = kontrola.varovani.length > 0 ? ` (${kontrola.varovani.join(" ")})` : "";
+      return `Dar ${navrh.castkaUSD.toLocaleString("en-US")} $ přijat${varovani}.` + citujZakony(kontrola.zakonIds);
+    },
+  },
+  {
+    id: "reklama",
+    nazev: "Reklamní kampaň",
+    ap: 2,
+    urovne: [],
+    popis: "Nákup médií z pokladny kampaně; klesající výnosy.",
+    over: (s, p) => {
+      const castka = p.castkaUSD ?? 0;
+      if (castka <= 0) return { chyby: ["Zadejte kladnou částku."], varovani: [] };
+      if (s.finance.pokladnaKampane < castka) return { chyby: ["Nedostatek prostředků v pokladně kampaně."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, _rng, p) => {
+      const castka = p.castkaUSD!;
+      s.finance.pokladnaKampane -= castka;
+      const efekt = 3.5 * Math.log2(1 + castka / 10_000);
+      const cil =
+        s.funkce.uroven === "outsider" || s.funkce.uroven === "kandidat" || s.funkce.uroven === "radni" || s.funkce.uroven === "starosta"
+          ? "znamostLokal"
+          : s.funkce.uroven === "kongresman"
+            ? "znamostStat"
+            : "znamostNarod";
+      s.postava.atributy[cil] = Math.min(100, r1(s.postava.atributy[cil] + efekt));
+      return `Reklama za ${castka.toLocaleString("en-US")} $: ${cil} +${r1(efekt)}.`;
+    },
+  },
+  {
+    id: "otisky_dveri",
+    nazev: "Otisky dveří",
+    ap: 2,
+    urovne: [],
+    popis: "Volební dveřování: autentický růst známosti a integrity.",
+    over: () => ({ chyby: [], varovani: [] }),
+    apply: (s, rng) => {
+      const efekt = rng.range(0.6, 1.6) * (1 + s.postava.dovednosti.medialnost / 10);
+      s.postava.atributy.znamostLokal = Math.min(100, r1(s.postava.atributy.znamostLokal + efekt));
+      s.postava.atributy.integrita = Math.min(100, r1(s.postava.atributy.integrita + 0.3));
+      return `Dveřování: známost lokálně +${r1(efekt)}, integrita +0,3.`;
+    },
+  },
+  {
+    id: "debata",
+    nazev: "Debata",
+    ap: 2,
+    urovne: [],
+    popis: "Souboj v debatě; výsledek dle rétoriky a prodejnosti.",
+    over: () => ({ chyby: [], varovani: [] }),
+    apply: (s, rng) => {
+      const roll = rng.next();
+      const sila = (s.postava.dovednosti.retorika + s.postava.dovednosti.medialnost) / 20 + roll * 0.5;
+      if (sila > 0.6) {
+        s.postava.atributy.znamostLokal = Math.min(100, r1(s.postava.atributy.znamostLokal + 1.5));
+        s.postava.atributy.znamostStat = Math.min(100, r1(s.postava.atributy.znamostStat + 0.5));
+        return "Debata byla vyhrána — známost roste.";
+      }
+      if (s.postava.atributy.prodejnost > 5) {
+        s.postava.atributy.integrita = Math.max(0, r1(s.postava.atributy.integrita - 1));
+        return "Debata dopadla hůře: soupeř využil Vaší útočné plochy.";
+      }
+      return "Debata proběhla vyrovnaně.";
+    },
+  },
+  {
+    id: "stab",
+    nazev: "Budovat štáb",
+    ap: 2,
+    urovne: [],
+    popis: "Profesionální tým za 25 000 $ z pokladny kampaně.",
+    over: (s) => {
+      if (s.finance.pokladnaKampane < 25_000) return { chyby: ["Pokladna kampaně nemá 25 000 $."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s) => {
+      s.finance.pokladnaKampane -= 25_000;
+      s.postava.atributy.socialniKapital = Math.min(100, r1(s.postava.atributy.socialniKapital + 2));
+      return "Štáb najat: sociální kapitál +2.";
+    },
+  },
+  {
+    id: "rozpocet_mesta",
+    nazev: "Rozpočet města",
+    ap: 3,
+    urovne: ["starosta"],
+    popis: "Parametr −2..+2: restrikce (deficit klesá, spokojenost klesá) vs. stimul (opačně).",
+    over: (_s, p) => {
+      const v = p.vyrovnanost ?? 0;
+      if (v < -2 || v > 2) return { chyby: ["Vyrovnanost musí být v rozsahu −2..+2."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, _rng, p) => {
+      const v = p.vyrovnanost!;
+      // Stimul (v > 0) zhoršuje deficit a zvyšuje spokojenost; restrikce opačně.
+      s.local.deficitPct = Math.max(-15, Math.min(20, r1(s.local.deficitPct + v * 0.8)));
+      s.local.spokojenost = Math.max(0, Math.min(100, r1(s.local.spokojenost + v * 1.5)));
+      s.local.kriminalita = Math.max(10, Math.min(120, r1(s.local.kriminalita + (v > 0 ? -0.5 : 0.5))));
+      return `Rozpočet nastaven (vyrovnanost ${v > 0 ? "+" : ""}${v}): deficit ${r1(s.local.deficitPct)} %, spokojenost ${Math.round(s.local.spokojenost)} %.`;
+    },
+  },
+  {
+    id: "zonace",
+    nazev: "Zónování a rozvoj",
+    ap: 2,
+    urovne: ["starosta"],
+    popis: "Revize územního plánu: spokojenost, kriminalita vs. zájmy developerů.",
+    over: () => ({ chyby: [], varovani: [] }),
+    apply: (s, rng) => {
+      if (rng.chance(0.7)) {
+        s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + 2));
+        s.local.kriminalita = Math.max(10, r1(s.local.kriminalita - 1));
+        return "Zónování schváleno: spokojenost +2, kriminalita −1.";
+      }
+      s.postava.atributy.socialniKapital = Math.max(0, r1(s.postava.atributy.socialniKapital - 1));
+      return "Developři zablokovali revizi: sociální kapitál −1.";
+    },
+  },
+  {
+    id: "tiskovka",
+    nazev: "Tisková konference",
+    ap: 1,
+    urovne: [],
+    popis: "Vystoupení pro média dle mediálního důvtipu.",
+    over: (s) => {
+      if (s.pravni.kriminalniRiziko > 30) {
+        return { chyby: [], varovani: ["Vysoké kriminální riziko: novináři mohou otevřít téma financování."] };
+      }
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, rng) => {
+      const roll = rng.next();
+      const efekt = s.postava.dovednosti.medialnost / 10 + roll * 0.8;
+      if (s.pravni.kriminalniRiziko > 30 && roll < 0.25) {
+        s.postava.atributy.integrita = Math.max(0, r1(s.postava.atributy.integrita - 3));
+        s.postava.atributy.prodejnost = Math.min(10, r1(s.postava.atributy.prodejnost + 0.5));
+        return "Tiskovka sklouzla k tématu financování — integrita −3, prodejnost +0,5.";
+      }
+      const cil = s.funkce.uroven === "kongresman" ? "znamostStat" : s.funkce.uroven === "guverner" || s.funkce.uroven === "prezident" ? "znamostNarod" : "znamostLokal";
+      s.postava.atributy[cil] = Math.min(100, r1(s.postava.atributy[cil] + efekt));
+      return `Tiskovka úspěšná: ${cil} +${r1(efekt)}.`;
+    },
+  },
+  {
+    id: "superpac_koordinace",
+    nazev: "Tajná koordinace se Super PAC",
+    ap: 2,
+    urovne: [],
+    popis: "Nelegální: velké peníze, vysoké kriminální riziko (illegal coordination).",
+    over: () => ({ chyby: [], varovani: ["Koordinace se Super PAC je trestný čin dle FECA — doporučujeme nepoužít."] }),
+    apply: (s, rng) => {
+      const vynos = Math.round(rng.range(500_000, 2_000_000));
+      s.finance.pokladnaKampane += vynos;
+      s.pravni.kriminalniRiziko += KRIMINALNI_KONSTANTY.rizikoSuperpacKoordinace + rng.int(0, 4);
+      zapisDoDeniku(s, "pravni", { superpacKoordinace: vynos, kolo: s.kolo });
+      return `Koordinovaná výpomoc Super PAC: +${vynos.toLocaleString("en-US")} $. Kriminální riziko výrazně roste.` + citujZakony(["11-cfr-109", "citizens-united"]);
+    },
+  },
+  {
+    id: "uplacek",
+    nazev: "Úplatek",
+    ap: 1,
+    urovne: [],
+    popis: "Úplatek úředníkovi (§666): rychlý výsledek, katastrofální riziko.",
+    over: () => ({ chyby: [], varovani: ["Zplacení úředníka je trestný čin (18 U.S.C. §201, §666)."] }),
+    apply: (s, rng, p) => {
+      const castka = p.castkaUSD ?? 10_000;
+      const svedku = p.pocetSvedku ?? rng.int(0, 2);
+      s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + rng.range(1.2, 2)));
+      const riziko = 4 + (castka / 1000) * KRIMINALNI_KONSTANTY.rizikoZaTisic + KRIMINALNI_KONSTANTY.rizikoZaSvedka * svedku;
+      s.pravni.kriminalniRiziko += Math.round(riziko * 10) / 10;
+      zapisDoDeniku(s, "pravni", { uplacek: castka, kolo: s.kolo });
+      return `Úplatek ${castka.toLocaleString("en-US")} $ vzal; riziko vyšetřování prudce roste.` + citujZakony(["18-usc-201", "18-usc-666"]);
+    },
+  },
+  {
+    id: "zakon",
+    nazev: "Předložit zákon",
+    ap: 4,
+    urovne: ["kongresman", "guverner", "prezident"],
+    popis: "Legislativní iniciativa dle tématu; úspěch dle dovedností a sociálního kapitálu.",
+    over: (_s, p) => {
+      if (!p.tema) return { chyby: ["Zvolte téma zákona."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, rng, p) => {
+      const tema = p.tema!;
+      const sila =
+        (s.postava.dovednosti.vyjednavani + s.postava.dovednosti.diplomacie) / 20 +
+        s.postava.atributy.socialniKapital / 150 +
+        rng.next() * 0.4;
+      if (sila > 0.75) {
+        s.postava.atributy.integrita = Math.min(100, r1(s.postava.atributy.integrita + 2));
+        s.postava.atributy.znamostNarod = Math.min(100, r1(s.postava.atributy.znamostNarod + 1));
+        switch (tema) {
+          case "ekonomika":
+            s.macro.hdpRust = r1(s.macro.hdpRust + 0.2);
+            break;
+          case "socialni":
+            s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + 3));
+            break;
+          case "beznacnost":
+            s.local.kriminalita = Math.max(10, r1(s.local.kriminalita - 2));
+            break;
+          case "zdravotnictvi":
+            s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + 2));
+            break;
+          case "infrastruktura":
+            s.macro.hdpRust = r1(s.macro.hdpRust + 0.1);
+            s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + 1));
+            break;
+        }
+        zapisDoDeniku(s, "akce", { zakon: tema, vysledek: "prijat" });
+        return `Zákon (${tema}) prošel — integrita +2, známost národně +1.`;
+      }
+      zapisDoDeniku(s, "akce", { zakon: tema, vysledek: "zamitnut" });
+      return `Zákon (${tema}) nenašel podporu a zamítl se.`;
+    },
+  },
+  {
+    id: "federalni_rozpocet",
+    nazev: "Federální rozpočet",
+    ap: 4,
+    urovne: ["prezident"],
+    popis: "Parametr −2..+2: konsolidace vs. expanze; vstupuje do fiskálního delta makra.",
+    over: (_s, p) => {
+      const v = p.vyrovnanost ?? 0;
+      if (v < -2 || v > 2) return { chyby: ["Vyrovnanost musí být v rozsahu −2..+2."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, _rng, p) => {
+      const v = p.vyrovnanost!;
+      (s as GameState & { fiskalniDelta?: number }).fiskalniDelta = v;
+      s.macro.deficitPctHDP = Math.max(-6, Math.min(20, r1(s.macro.deficitPctHDP + v)));
+      s.local.spokojenost = Math.max(0, Math.min(100, r1(s.local.spokojenost + v * 2)));
+      return `Federální rozpočet nastaven: deficit ${r1(s.macro.deficitPctHDP)} % HDP, fiskální delta ${v > 0 ? "+" : ""}${v} p.b.`;
+    },
+  },
+  {
+    id: "exekutivni_prikaz",
+    nazev: "Exekutivní příkaz",
+    ap: 3,
+    urovne: ["prezident"],
+    popis: "Rychlá exekutiva bez Kongresu; roste prodejnost (kritika překročení pravomocí).",
+    over: () => ({ chyby: [], varovani: [] }),
+    apply: (s, rng, p) => {
+      const efekt = 1 + rng.next();
+      switch (p.tema ?? "ekonomika") {
+        case "ekonomika":
+          s.macro.hdpRust = r1(s.macro.hdpRust + 0.15);
+          break;
+        case "socialni":
+          s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + efekt));
+          break;
+        default:
+          s.local.spokojenost = Math.min(100, r1(s.local.spokojenost + efekt / 2));
+      }
+      s.postava.atributy.prodejnost = Math.min(10, r1(s.postava.atributy.prodejnost + 0.3));
+      return "Exekutivní příkaz vydán; prodejnost +0,3 (kritika překročení pravomocí).";
+    },
+  },
+  {
+    id: "konverzace",
+    nazev: "Konverzace s osobou",
+    ap: 1,
+    urovne: [],
+    popis: "Přístup přes prestižní bránu; volitelný slib se ukládá do paměti NPC.",
+    over: (s, p) => {
+      if (!p.npcId) return { chyby: ["Zvolte osobu (npcId)."], varovani: [] };
+      if (!s.npc.find((n) => n.id === p.npcId)) return { chyby: ["Osoba nebyla nalezena."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, rng, p) => {
+      const vysl = provedKonverzaci(s, p.npcId!, rng.next(), p.slibText ?? null);
+      zapisDoDeniku(s, "akce", { npc: p.npcId, prijato: vysl.prijato });
+      return vysl.zprava;
+    },
+  },
+  {
+    id: "pruzkum",
+    nazev: "Průzkum veřejného mínění",
+    ap: 1,
+    urovne: [],
+    popis: "Odhad podílu hlasů proti generickému soupeři za 20 000 $.",
+    over: (s) => {
+      if (s.finance.pokladnaKampane < 20_000 && s.postava.atributy.majetekUSD < 20_000) {
+        return { chyby: ["Nemáte prostředky na průzkum (20 000 $)."], varovani: [] };
+      }
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, rng, p) => {
+      if (s.finance.pokladnaKampane >= 20_000) s.finance.pokladnaKampane -= 20_000;
+      else s.postava.atributy.majetekUSD -= 20_000;
+      const typ: TypZavodu =
+        p.tema === "prezidentske" ? "prezidentske"
+        : p.tema === "gubernatorske" ? "gubernatorske"
+        : p.tema === "kongresove" ? "kongresove"
+        : "obecni";
+      const hrac = hracProfil(s);
+      const souper = souperProZavod(s, rng, typ);
+      const share = dvoucestnyShare(hrac, souper, s.macro);
+      return `Průzkum (${typ}): odhadovaný podíl ${Math.round(share * 100)} % (soupeř: ${Math.round((1 - share) * 100)} %).`;
+    },
+  },
+  {
+    id: "compliance_audit",
+    nazev: "Compliance audit",
+    ap: 1,
+    urovne: [],
+    popis: "Interní revize financování za 50 000 $; snižuje riziko FEC auditu.",
+    over: (s) => {
+      if (!s.finance.vyborZalozen) return { chyby: ["Bez výboru není co auditovat."], varovani: [] };
+      if (s.finance.pokladnaKampane < 50_000) return { chyby: ["Pokladna nemá 50 000 $."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s) => {
+      s.finance.pokladnaKampane -= 50_000;
+      s.pravni.fecAuditRiziko = Math.max(0, s.pravni.fecAuditRiziko - 10);
+      s.postava.atributy.etika = Math.min(10, r1(s.postava.atributy.etika + 0.2));
+      return "Audit dokončen: riziko FEC auditu −10.";
+    },
+  },
+  {
+    id: "vyhlasit_kandidaturu",
+    nazev: "Vyhlásit kandidaturu",
+    ap: 1,
+    urovne: [],
+    popis: "Zaregistrovat závod dle aktuálního cíle (ústavní, právní i kariérní kontrola).",
+    over: (s, p) => {
+      const cil: OfficeLevel = (p.tema as OfficeLevel) ?? "radni";
+      const volitelnost = overVolitelnost(s.postava, cil, cil === s.funkce.uroven ? s.funkce.obdobi : 0);
+      if (!volitelnost.splneno) {
+        return { chyby: [`Nesplněny podmínky volitelnosti: ${volitelnost.duvod}${citujZakony(volitelnost.zakonIds ?? [])}`], varovani: [] };
+      }
+      if (s.pravni.odsouzen) return { chyby: ["Odsouzený nemůže kandidovat na veřejnou funkci."], varovani: [] };
+      // Kariérní brance (dračí doupě): bez prahů nelze kandidovat.
+      const brana = BRANCE[cil === "outsider" ? "kandidat" : (cil as keyof typeof BRANCE)] ?? BRANCE.radni;
+      const chybejici: string[] = [];
+      if (s.finance.pokladnaKampane < brana.pokladnaKampan) chybejici.push(`pokladna kampaně ≥ ${(brana.pokladnaKampan / 1000).toFixed(0)}k $`);
+      if (s.postava.atributy.znamostStat < brana.znamostStat) chybejici.push(`známost ve státě ≥ ${brana.znamostStat} %`);
+      if (s.postava.atributy.socialniKapital < brana.socialniKapital) chybejici.push(`sociální kapitál ≥ ${brana.socialniKapital}`);
+      if (s.postava.atributy.etika < brana.etika) chybejici.push(`etika ≥ ${brana.etika}`);
+      if (chybejici.length > 0) {
+        return { chyby: [`Kariérní brance nesplněna: ${chybejici.join(", ")}.`], varovani: [] };
+      }
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, _rng, p) => {
+      const cil: OfficeLevel = (p.tema as OfficeLevel) ?? "radni";
+      const typ: TypZavodu =
+        cil === "radni" || cil === "starosta" ? "obecni"
+        : cil === "kongresman" ? "kongresove"
+        : cil === "guverner" ? "gubernatorske"
+        : "prezidentske";
+      s.beziKampan.typZavodu = typ;
+      s.beziKampan.cisloKola = s.kolo;
+      zapisDoDeniku(s, "akce", { kandidatura: cil, typ });
+      return `Kandidatura na úroveň ${cil} vyhlášena (${typ} závody).`;
+    },
+  },
+  {
+    id: "splnit_slib",
+    nazev: "Splnit slib",
+    ap: 1,
+    urovne: [],
+    popis: "Naplňte závazek vůči osobě; posiluje vztah a integritu.",
+    over: (s, p) => {
+      if (!p.slibId) return { chyby: ["Zvolte slib (slibId)."], varovani: [] };
+      if (!s.sliby.find((x) => x.id === p.slibId)) return { chyby: ["Slib nenalezen."], varovani: [] };
+      return { chyby: [], varovani: [] };
+    },
+    apply: (s, _rng, p) => {
+      const v = splnSlib(s, p.slibId!);
+      return v.zprava;
+    },
+  },
+];
+
+/** Vyhledání akce dle id. */
+export function najdiAkci(id: string): AkceDef | undefined {
+  return AKCE.find((a) => a.id === id);
+}
+
+/** Seznam akcí dostupných na dané úrovni (pro UI/AI). */
+export function dostupneAkce(uroven: OfficeLevel): AkceDef[] {
+  return AKCE.filter((a) => a.urovne.length === 0 || a.urovne.includes(uroven));
+}
+
+/* ===== events.ts ===== */
+/**
+ * events.ts — tematické šablony událostí (klima, migrace, geopolitika, dluh,
+ * technologie, energetika) s vahou výskytu dle stavu světa a validátor
+ * návrhů od AI (Mistral), které smí měnit pouze povolené klíče efektů.
+ */
+
+export interface SablonaUdalosti {
+  id: string;
+  tema: GameEvent["tema"];
+  nazev: string;
+  popis: string;
+  /** Relativní váha v katalogu; může se dynamicky měnit dle stavu (funkce vaha). */
+  vaha: (s: GameState) => number;
+  /** Aplikace efektů na stav; vrací zprávu pro log. */
+  apply: (s: GameState, rng: Rng) => string;
+}
+
+
+export const SABLONY: SablonaUdalosti[] = [
+  {
+    id: "hurikan",
+    tema: "klima",
+    nazev: "Hurikán postihl pobřeží",
+    popis: "Katastrofická bouře zasáhla jižní státy; nutná federální pomoc.",
+    vaha: () => 6,
+    apply: (s, rng) => {
+      const skoda = rng.int(2, 9);
+      s.macro.hdpRust = r1(s.macro.hdpRust - skoda / 20);
+      s.macro.deficitPctHDP = r1(s.macro.deficitPctHDP + skoda / 8);
+      s.local.spokojenost = Math.max(0, r1(s.local.spokojenost - skoda / 2));
+      return `Hurikán: škody za ${skoda} mld. $; HDP −${r1(skoda / 20)} p.b., spokojenost −${r1(skoda / 2)}.`;
+    },
+  },
+  {
+    id: "pozar",
+    tema: "klima",
+    nazev: "Lesní požáry na západě",
+    popis: "Rozsáhlé požáry; environmentální tlak roste.",
+    vaha: (s) => (s.postava.ideologie < -3 ? 8 : 5),
+    apply: (s) => {
+      s.local.spokojenost = Math.max(0, r1(s.local.spokojenost - 1.5));
+      return "Požáry zhoršily ovzduší; voliči volají po klimatické agendě (spokojenost −1,5).";
+    },
+  },
+  {
+    id: "migracni_vlna",
+    tema: "migrace",
+    nazev: "Nápor na jižní hranici",
+    popis: "Rekordní počet průchodů; tlak na řešení.",
+    vaha: () => 7,
+    apply: (s, rng) => {
+      const sila = rng.range(0.5, 1.5);
+      if (s.funkce.uroven === "prezident" || s.funkce.uroven === "guverner") {
+        s.postava.atributy.prodejnost = Math.min(10, r1(s.postava.atributy.prodejnost + 0.2 * sila));
+        s.local.spokojenost = Math.max(0, r1(s.local.spokojenost - 2 * sila));
+      } else {
+        s.postava.atributy.znamostStat = Math.min(100, r1(s.postava.atributy.znamostStat + 0.3));
+      }
+      return "Migrační vlna dominuje zprávám; bezpečná rozhodnutí budou politicky měřena.";
+    },
+  },
+  {
+    id: "geopoliticka_krize",
+    tema: "geopolitika",
+    nazev: "Napětí v zámoří",
+    popis: "Konflikt velmocí eskaluje; trhy nervózní.",
+    vaha: () => 6,
+    apply: (s, rng) => {
+      const sila = rng.range(0.4, 1.4);
+      s.macro.hdpRust = r1(s.macro.hdpRust - 0.2 * sila);
+      s.macro.inflace = r1(s.macro.inflace + 0.2 * sila);
+      if (s.funkce.uroven === "prezident") {
+        s.postava.atributy.znamostNarod = Math.min(100, r1(s.postava.atributy.znamostNarod + 1));
+      }
+      return "Geopolitická krize: inflace +šok, HDP tlak. Zahraniční zkouška pro vládu.";
+    },
+  },
+  {
+    id: "dluzni_krize",
+    tema: "dluh",
+    nazev: "Vyjednávání o stropu dluhu",
+    popis: "Kongres balancuje na kraji defaultu.",
+    vaha: (s) => (s.macro.dluhPctHDP > 105 ? 9 : 4),
+    apply: (s, rng) => {
+      if (rng.chance(0.65)) {
+        return "Dohoda o stropu dluhu padla v poslední chvíli; trhy se uklidnily.";
+      }
+      s.macro.deficitPctHDP = r1(s.macro.deficitPctHDP + 0.4);
+      s.local.spokojenost = Math.max(0, r1(s.local.spokojenost - 2));
+      return "Zablokování stropu dluhu: vládní šetření, spokojenost −2, deficit +0,4.";
+    },
+  },
+  {
+    id: "ai_revoluce",
+    tema: "technologie",
+    nazev: "Vlna investic do AI",
+    popis: "Technologický sektor roste; otázky regulace.",
+    vaha: () => 5,
+    apply: (s, rng) => {
+      const sila = rng.range(0.3, 1.2);
+      s.macro.hdpRust = r1(s.macro.hdpRust + 0.2 * sila);
+      s.macro.nezamestnanost = r1(s.macro.nezamestnanost + 0.05 * sila);
+      return "AI boom přidává na HDP, ale vyvolává obavy ztráty pracovních míst.";
+    },
+  },
+  {
+    id: "energeticky_sok",
+    tema: "energetika",
+    nazev: "Šok cen ropy",
+    popis: "Výpadky těžby vytlačují ceny vzhůru.",
+    vaha: () => 5,
+    apply: (s, rng) => {
+      const sila = rng.range(0.5, 1.5);
+      s.macro.inflace = r1(s.macro.inflace + 0.5 * sila);
+      s.local.spokojenost = Math.max(0, r1(s.local.spokojenost - 1.5 * sila));
+      return "Ceny paliv vystřelily: inflace +šok, spokojenost klesá.";
+    },
+  },
+  {
+    id: "kampan_skandaly",
+    tema: "pravni",
+    nazev: "Média vyšetřují dary",
+    popis: "Investigativní reportéři prochází Vaše hlášení.",
+    vaha: (s) => 2 + s.pravni.fecAuditRiziko / 20,
+    apply: (s, rng) => {
+      if (rng.next() < s.pravni.fecAuditRiziko / 150) {
+        s.postava.atributy.integrita = Math.max(0, s.postava.atributy.integrita - 3);
+        return "Série článků o Vašem financování: integrita −3.";
+      }
+      return "Reportéři nenašli nic — Vaše papírová stopa je čistá.";
+    },
+  },
+];
+
+/** Týdenní event tick — s pravděpodobností dle tempa vypukne tematická událost. */
+export function eventTick(s: GameState, rng: Rng): GameEvent[] {
+  const vypukne = rng.next() < 0.25; // cca jedna událost za čtyři kola
+  if (!vypukne) return [];
+  const vahy = SABLONY.map((t) => Math.max(0, t.vaha(s)));
+  const celkem = vahy.reduce((a, b) => a + b, 0);
+  let roll = rng.next() * celkem;
+  let vybrana = SABLONY[0];
+  for (let i = 0; i < SABLONY.length; i++) {
+    roll -= vahy[i];
+    if (roll <= 0) {
+      vybrana = SABLONY[i];
+      break;
+    }
+  }
+  const zprava = vybrana.apply(s, rng);
+  const udalost: GameEvent = {
+    id: `${vybrana.id}-${s.kolo}`,
+    tema: vybrana.tema,
+    nazev: vybrana.nazev,
+    popis: zprava,
+    kolo: s.kolo,
+    dopady: {},
+  };
+  s.udalosti.push(udalost);
+  s.denik.push({ kolo: s.kolo, typ: "udalost", data: { id: udalost.id, nazev: vybrana.nazev, popis: zprava } });
+  return [udalost];
+}
+
+/**
+ * Validátor návrhů AI (Mistral). AI smí navrhnout událost, ale engine
+ * akceptuje pouze schema-validní návrhy: povolené klíče efektů a rozsah magnitud.
+ */
+export const POVOLENE_KLICE_EFEKTU = [
+  "pokladna",
+  "socialniKapital",
+  "etika",
+  "prodejnost",
+  "znamostLokal",
+  "znamostStat",
+  "znamostNarod",
+  "spokojenost",
+  "kriminalita",
+  "inflaceDelta",
+  "hdpDelta",
+] as const;
+
+export interface NavrhAiUdalosti {
+  tema?: string;
+  nazev?: string;
+  popis?: string;
+  dopady?: Record<string, number>;
+}
+
+export interface ValidaceNavrhu {
+  platny: boolean;
+  chyby: string[];
+  ocisteneDopady: Record<string, number>;
+}
+
+export function validateAiEventProposal(n: NavrhAiUdalosti): ValidaceNavrhu {
+  const chyby: string[] = [];
+  const ocisteneDopady: Record<string, number> = {};
+  if (!n.nazev || n.nazev.trim().length < 3) chyby.push("Chybí nebo příliš krátký název.");
+  if (!n.popis || n.popis.trim().length < 10) chyby.push("Chybí nebo příliš krátký popis.");
+  const povoleneTemata = ["klima", "migrace", "geopolitika", "dluh", "technologie", "energetika", "pravni", "volby", "ekonomika"];
+  if (n.tema && !povoleneTemata.includes(n.tema)) chyby.push(`Neznámé téma: ${n.tema}.`);
+  if (n.dopady) {
+    for (const [k, v] of Object.entries(n.dopady)) {
+      if (!(POVOLENE_KLICE_EFEKTU as readonly string[]).includes(k)) {
+        chyby.push(`Nepovolený klíč efektu: ${k}.`);
+        continue;
+      }
+      if (typeof v !== "number" || Number.isNaN(v)) {
+        chyby.push(`Hodnota klíče ${k} není číslo.`);
+        continue;
+      }
+      if (Math.abs(v) > 1) {
+        chyby.push(`Magnituda klíče ${k} mimo rozsah (−1..1).`);
+        continue;
+      }
+      ocisteneDopady[k] = v;
+    }
+  }
+  return { platny: chyby.length === 0, chyby, ocisteneDopady };
+}
+
+/** Aplikace očištěného AI návrhu na stav (po validaci). */
+export function applyAiEvent(s: GameState, v: ValidaceNavrhu, nazev: string, popis: string, tema: string): GameEvent | null {
+  if (!v.platny) return null;
+  const a = s.postava.atributy;
+  const d = v.ocisteneDopady;
+  if ("pokladna" in d) s.finance.pokladnaKampane = Math.max(0, s.finance.pokladnaKampane + d.pokladna * 100_000);
+  if ("socialniKapital" in d) a.socialniKapital = Math.max(0, Math.min(100, r1(a.socialniKapital + d.socialniKapital * 10)));
+  if ("etika" in d) a.etika = Math.max(0, Math.min(10, r1(a.etika + d.etika * 2)));
+  if ("prodejnost" in d) a.prodejnost = Math.max(0, Math.min(10, r1(a.prodejnost + d.prodejnost * 2)));
+  if ("znamostLokal" in d) a.znamostLokal = Math.max(0, Math.min(100, r1(a.znamostLokal + d.znamostLokal * 15)));
+  if ("znamostStat" in d) a.znamostStat = Math.max(0, Math.min(100, r1(a.znamostStat + d.znamostStat * 15)));
+  if ("znamostNarod" in d) a.znamostNarod = Math.max(0, Math.min(100, r1(a.znamostNarod + d.znamostNarod * 15)));
+  if ("spokojenost" in d) s.local.spokojenost = Math.max(0, Math.min(100, r1(s.local.spokojenost + d.spokojenost * 20)));
+  if ("kriminalita" in d) s.local.kriminalita = Math.max(10, Math.min(120, r1(s.local.kriminalita + d.kriminalita * 10)));
+  if ("inflaceDelta" in d) s.macro.inflace = r1(s.macro.inflace + d.inflaceDelta * 2);
+  if ("hdpDelta" in d) s.macro.hdpRust = r1(s.macro.hdpRust + d.hdpDelta * 2);
+  const udalost: GameEvent = {
+    id: `ai-${s.kolo}-${s.udalosti.length + 1}`,
+    tema: (tema as GameEvent["tema"]) ?? "ekonomika",
+    nazev,
+    popis,
+    kolo: s.kolo,
+    dopady: d,
+  };
+  s.udalosti.push(udalost);
+  s.denik.push({ kolo: s.kolo, typ: "udalost", data: { id: udalost.id, nazev, popis, zdroj: "ai" } });
+  return udalost;
+}
+
+/* ===== audit.ts ===== */
+/**
+ * audit.ts — logovací a replay helper: dvě hry se stejným seedem a stejnou
+ * posloupností akcí musí produkovat identický stav (JSON.stringify).
+ */
+
+/** Zkrácený serializovatelný otisk stavu pro replay testy. */
+export function otiskStavu(s: unknown): string {
+  return JSON.stringify(s);
+}
+
+/** Vytěží ze stavu zprávy deníku pro dané kolo. */
+export function zpravyKola(s: { denik: { kolo: number; typ: string; data: Record<string, unknown> }[] }, kolo: number): string[] {
+  return s.denik.filter((e) => e.kolo === kolo).map((e) => JSON.stringify(e.data));
+}
+
+/** Skriptované replaye: posloupnost instrukcí pro deterministické přehrání. */
+export interface ReplayInstrukce {
+  typ: "akce" | "endTurn";
+  akceId?: string;
+  parametry?: Record<string, unknown>;
+}
+
+/**
+ * Porovná dva stavy po replayi: vrací true, pokud jsou bitově totožné
+ * v serializované podobě (klíčový invariant determinismu).
+ */
+export function stavyStejne(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/* ===== game.ts ===== */
+/**
+ * game.ts — orchestrace: hráčské akce, týdenní endTurn (AP, ekonomika, právo,
+ * události, kalendář voleb), kariérní brance a stínová kariéra po odsouzení.
+ *
+ * Determinismus: veškerá náhodnost prochází Rng odvozeným ze seedu, čísla kola
+ * a zbývajících AP — dvě hry se stejným seedem a skriptem jsou identické.
+ */
+
+/** Rng pro hráčskou akci — odvozený od seedu, kola a zbývajících AP. */
+function rngAkce(s: GameState): Rng {
+  return new Rng((s.seed ^ (s.kolo * 7919) ^ (s.ap * 104_729)) >>> 0);
+}
+
+/** Cílová úroveň závodu dle typu a aktuální pozice. */
+export function cilovaUrovenProZavod(s: GameState, typ: TypZavodu): OfficeLevel {
+  switch (typ) {
+    case "obecni":
+      return s.funkce.uroven === "radni" ? "starosta" : "radni";
+    case "kongresove":
+      return "kongresman";
+    case "gubernatorske":
+      return "guverner";
+    case "prezidentske":
+      return "prezident";
+  }
+}
+
+/** Provede hráčskou akci: validace → aplikace → účtování AP → zápis do deníku. */
+export function applyPlayerAction(s: GameState, akceId: string, p: ParametryAkce = {}): VysledekAkce {
+  const def = najdiAkci(akceId);
+  if (!def) {
+    return { ok: false, zprava: `Neznámá akce: ${akceId}. Dostupné: ${dostupneAkce(s.funkce.uroven).map((a) => a.id).join(", ")}.`, varovani: [], apUctovano: 0 };
+  }
+  if (def.urovne.length > 0 && !def.urovne.includes(s.funkce.uroven)) {
+    return { ok: false, zprava: `Akce ${def.nazev} není dostupná na úrovni ${s.funkce.uroven}.`, varovani: [], apUctovano: 0 };
+  }
+  if (s.ap < def.ap) {
+    return { ok: false, zprava: `Nedostatek akčních bodů (potřeba ${def.ap}, zbývá ${s.ap}).`, varovani: [], apUctovano: 0 };
+  }
+  const kontrola = def.over(s, p);
+  if (kontrola.chyby.length > 0) {
+    return { ok: false, zprava: kontrola.chyby.join(" "), varovani: kontrola.varovani, apUctovano: 0 };
+  }
+  const zprava = def.apply(s, rngAkce(s), p);
+  s.ap -= def.ap;
+  s.denik.push({ kolo: s.kolo, typ: "akce", data: { akce: akceId, zprava } });
+  return { ok: true, zprava, varovani: kontrola.varovani, apUctovano: def.ap };
+}
+
+export interface SouhrnKola {
+  kolo: number;
+  tyden: number;
+  rok: number;
+  zpravy: string[];
+  volbyProbehly: boolean;
+  postup: OfficeLevel | null;
+}
+
+/**
+ * Ukončení kola: ticky ekonomiky, práva, slibů a událostí; přechod kalendáře;
+ * primárky (týden 24) a všeobecné volby (týden 45); reset AP.
+ */
+export function endTurn(s: GameState): SouhrnKola {
+  const rng = rngProStav(s);
+  const zpravy: string[] = [];
+  let volbyProbehly = false;
+  let postup: OfficeLevel | null = null;
+
+  // 1. Lokální ekonomika: mírný drift dle národního kontextu.
+  lokalkaTick(s, {
+    kriminalitaDelta: rng.range(-0.2, 0.2),
+    spokojenostDelta: rng.range(-0.5, 0.5),
+    rozpocetDeltaPct: 0,
+  });
+
+  // 2. Právní kaskáda (FEC → skandál → DOJ → odsouzení).
+  const pravni = pravniTick(s, rng.next());
+  for (const u of pravni) {
+    zpravy.push(u.zprava);
+    s.denik.push({ kolo: s.kolo, typ: "pravni", data: { typ: u.typ, zprava: u.zprava } });
+  }
+
+  // 3. Sliby: lhuty a prohřešky.
+  for (const z of slibyTick(s)) {
+    zpravy.push(z);
+    s.denik.push({ kolo: s.kolo, typ: "system", data: { zprava: z } });
+  }
+
+  // 4. Události (šablony, 25 % šance na týden).
+  eventTick(s, rng);
+
+  // 5. Kvartální makro (každé 4. kolo).
+  if (s.kolo % 4 === 0) {
+    const fiskalniDelta = (s as GameState & { fiskalniDelta?: number }).fiskalniDelta ?? 0;
+    s.macro = prepoctiMakro(s.macro, { fiscalDelta: fiskalniDelta, sok: 0 });
+    for (const z of makroKrize(s.macro)) {
+      zpravy.push(z);
+      s.denik.push({ kolo: s.kolo, typ: "ekonomika", data: { zprava: z } });
+    }
+  }
+
+  // 6. Odsouzený: stínová kariéra — demotion, nikdy definitivní konec.
+  if (s.pravni.odsouzen && s.funkce.uroven !== "outsider") {
+    const stara = s.funkce.uroven;
+    s.funkce = { uroven: "outsider", odKola: s.kolo, obdobi: 0 };
+    s.beziKampan = { typZavodu: null, cisloKola: null };
+    const zprava = `Byl jste odsouzen a přišel o funkci ${stara}. Stínová kariéra: začínáte znovu jako outsider.`;
+    zpravy.push(zprava);
+    s.denik.push({ kolo: s.kolo, typ: "system", data: { zprava } });
+  }
+
+  // 7. Přechod času: kolo → týden → rok.
+  s.kolo += 1;
+  s.tyden += 1;
+  if (s.tyden > 52) {
+    s.tyden = 1;
+    s.rok += 1;
+  }
+
+  // 8. Kalendář voleb pro nový týden.
+  const zavody = zavodyVRoce(s.rok);
+  const bezi = s.beziKampan.typZavodu;
+
+  if (bezi && zavody.includes(bezi)) {
+    const cil = cilovaUrovenProZavod(s, bezi);
+
+    // Primárky (jen straníci; nezávislí jdou přes petice rovnou do voleb).
+    if (s.tyden === TYDEN_PRIMAREK && s.postava.strana) {
+      const souper = {
+        ideologie: s.postava.ideologie + rng.range(-3, 3),
+        znamost: rng.range(30, 70),
+        integrita: rng.range(40, 70),
+        prodejnost: rng.range(2, 7),
+        vydajeUSD: rng.range(50_000, 500_000),
+        kandidujeZnovu: rng.chance(0.3),
+      };
+      const primarky = simulatePrimarky(hracProfil(s), souper, rng);
+      volbyProbehly = true;
+      if (!primarky.postoupil) {
+        zpravy.push(`Primárky prohrány: ${Math.round(primarky.share * 100)} % hlasů, delegáti ${primarky.delegatiHrac}:${primarky.delegatiSouper}. Kampaň končí.`);
+        s.beziKampan = { typZavodu: null, cisloKola: null };
+        s.postava.atributy.integrita = Math.max(0, s.postava.atributy.integrita - 2);
+      } else {
+        zpravy.push(`Primárky vyhrány: ${Math.round(primarky.share * 100)} % hlasů, delegáti ${primarky.delegatiHrac}:${primarky.delegatiSouper}. Postupujete do všeobecných voleb.`);
+        s.postava.atributy.znamostStat = Math.min(100, s.postava.atributy.znamostStat + 2);
+      }
+      s.denik.push({
+        kolo: s.kolo - 1,
+        typ: "volby",
+        data: { primarky: { share: primarky.share, delegatiHrac: primarky.delegatiHrac, delegatiSouper: primarky.delegatiSouper, postoupil: primarky.postoupil } },
+      });
+    }
+
+    // Všeobecné volby.
+    if (s.beziKampan.typZavodu === bezi && s.tyden === TYDEN_VOLEB) {
+      volbyProbehly = true;
+      const souper = souperProZavod(s, rng, bezi);
+      const vysledek = simulateVseobecne(hracProfil(s), souper, s.macro, bezi, rng);
+      if (vysledek.vyhral) {
+        s.funkce = { uroven: cil, odKola: s.kolo, obdobi: 1 };
+        postup = cil;
+        s.postava.atributy.socialniKapital = Math.min(100, s.postava.atributy.socialniKapital + 5);
+        zpravy.push(
+          `VOLBY VYHRÁNY: stali jste se ${cil} s ${Math.round(vysledek.share * 100)} % hlasů.` +
+          (vysledek.detail ? ` Elektorské hlasy: ${vysledek.detail.evHrac}:${vysledek.detail.evSouper}.` : "")
+        );
+      } else {
+        zpravy.push(`Volby prohrány: ${Math.round(vysledek.share * 100)} % hlasů. Zůstává ${s.funkce.uroven}.`);
+        s.postava.atributy.integrita = Math.max(0, s.postava.atributy.integrita - 1);
+      }
+      s.beziKampan = { typZavodu: null, cisloKola: null };
+      s.finance.daryTentoCyklus = {};
+      s.denik.push({
+        kolo: s.kolo - 1,
+        typ: "volby",
+        data: {
+          typ: bezi,
+          cil,
+          vyhral: vysledek.vyhral,
+          share: vysledek.share,
+          detail: vysledek.detail
+            ? { evHrac: vysledek.detail.evHrac, evSouper: vysledek.detail.evSouper, staty: vysledek.detail.staty }
+            : null,
+        },
+      });
+    }
+  }
+
+  // 9. Kariérní brance: hlášení připravenosti (jednou za čtvrt roku).
+  const brance = vyhodnotBranci(s);
+  if (!brance.splneno && s.kolo % 13 === 0) {
+    zpravy.push(`Kariérní brance pro další úroveň: chybí — ${brance.chybejici.join("; ")}.`);
+  }
+
+  // 10. Nové kolo: reset akčních bodů.
+  s.ap = 10;
+
+  return { kolo: s.kolo, tyden: s.tyden, rok: s.rok, zpravy, volbyProbehly, postup };
+}
+
+/* ===== ai.ts ===== */
+/**
+ * ai.ts — vrstva pro AI chat (Mistral API). Engine zůstává jediným vykonavatelem:
+ * AI pouze navrhuje plán ve striktním JSON schématu, tento modul plán vyčistí,
+ * zvaliduje vůči katalogu akcí a rozpočtu AP a teprve pak jej provede přes
+ * applyPlayerAction / applyAiEvent. Veškerá rozhodnutí tedy zůstávají
+ * deterministická a replaovatelná; AI nesahá na stav přímo.
+ */
+
+
+/* ============================================================
+ * Schéma parametrů akcí — jediná whitelist tabulka pro AI i UI.
+ * ============================================================ */
+
+type TypParametru = "cislo" | "text" | "vyber";
+
+interface SpecParametru {
+  klic: keyof ParametryAkce & string;
+  typ: TypParametru;
+  volby?: readonly string[];
+  min?: number;
+  max?: number;
+  /** Popis do systémového promptu pro AI. */
+  napoveda: string;
+}
+
+const DOVEDNOSTI = ["diplomacie", "retorika", "finance", "vyjednavani", "medialnost"] as const;
+const TYPY_DARCE = ["individual", "pac", "superpac", "foreign", "corporate", "self"] as const;
+const TEMATA_ZAKONA = ["ekonomika", "socialni", "beznacnost", "zdravotnictvi", "infrastruktura"] as const;
+const TYPY_ZAVODU = ["obecni", "kongresove", "gubernatorske", "prezidentske"] as const;
+const CILE_KANDIDATURY = ["radni", "starosta", "kongresman", "guverner", "prezident"] as const;
+
+export const SPEC_PARAMETRU: Record<string, SpecParametru[]> = {
+  prace_na_podniku: [],
+  networking: [],
+  projev: [],
+  filantropie: [],
+  skoleni: [{ klic: "dovednost", typ: "vyber", volby: DOVEDNOSTI, napoveda: "dovednost k tréninku" }],
+  zalozit_vybor: [],
+  fundraiser: [],
+  dar: [
+    { klic: "castkaUSD", typ: "cislo", min: 1, max: 100_000_000, napoveda: "částka daru v USD" },
+    { klic: "typDarce", typ: "vyber", volby: TYPY_DARCE, napoveda: "typ dárce" },
+    { klic: "volba", typ: "vyber", volby: ["primarky", "hlavni"], napoveda: "pro které volby" },
+    { klic: "npcId", typ: "text", napoveda: "id osoby dárce ze seznamu NPC (nepovinné)" },
+    { klic: "slibUrednihoAktu", typ: "text", napoveda: "explicitní slib úředního aktu = quid pro quo (nepovinné, ilegální)" },
+    { klic: "pocetSvedku", typ: "cislo", min: 0, max: 10, napoveda: "počet svědků podmínek daru" },
+    { klic: "koordinace", typ: "cislo", min: 0, max: 1, napoveda: "1 = koordinace se Super PAC (ilegální), 0 = bez" },
+  ],
+  reklama: [{ klic: "castkaUSD", typ: "cislo", min: 1, max: 100_000_000, napoveda: "částka na reklamu v USD" }],
+  otisky_dveri: [],
+  debata: [],
+  stab: [],
+  tiskovka: [],
+  superpac_koordinace: [],
+  uplacek: [
+    { klic: "castkaUSD", typ: "cislo", min: 1, max: 10_000_000, napoveda: "částka úplatku v USD" },
+    { klic: "pocetSvedku", typ: "cislo", min: 0, max: 10, napoveda: "počet svědků" },
+  ],
+  zakon: [{ klic: "tema", typ: "vyber", volby: TEMATA_ZAKONA, napoveda: "téma zákona" }],
+  federalni_rozpocet: [{ klic: "vyrovnanost", typ: "cislo", min: -2, max: 2, napoveda: "−2 konsolidace .. +2 expanze" }],
+  exekutivni_prikaz: [{ klic: "tema", typ: "vyber", volby: ["ekonomika", "socialni"], napoveda: "téma příkazu" }],
+  rozpocet_mesta: [{ klic: "vyrovnanost", typ: "cislo", min: -2, max: 2, napoveda: "−2 šetření .. +2 investice" }],
+  zonace: [],
+  konverzace: [
+    { klic: "npcId", typ: "text", napoveda: "id osoby ze seznamu NPC" },
+    { klic: "slibText", typ: "text", napoveda: "volitelný závazný slib (zavazuje na 52 kol)" },
+  ],
+  pruzkum: [{ klic: "tema", typ: "vyber", volby: TYPY_ZAVODU, napoveda: "typ závodu průzkumu" }],
+  compliance_audit: [],
+  vyhlasit_kandidaturu: [{ klic: "tema", typ: "vyber", volby: CILE_KANDIDATURY, napoveda: "cílová funkce kandidatury" }],
+  splnit_slib: [{ klic: "slibId", typ: "text", napoveda: "id slibu ve stavu v_progressu" }],
+};
+
+/* ============================================================
+ * Kompaktní shrnutí stavu pro kontext AI
+ * ============================================================ */
+
+export function stavProAi(s: GameState): string {
+  const a = s.postava.atributy;
+  const brance = vyhodnotBranci(s);
+  return JSON.stringify({
+    jmeno: s.postava.jmeno,
+    funkce: s.funkce.uroven,
+    kolo: s.kolo,
+    rok: s.rok,
+    tyden: s.tyden,
+    ap: s.ap,
+    ideologie: s.postava.ideologie,
+    majetekUSD: Math.round(a.majetekUSD),
+    pokladnaKampane: Math.round(s.finance.pokladnaKampane),
+    vyborZalozen: s.finance.vyborZalozen,
+    znamost: { lokal: Math.round(a.znamostLokal), stat: Math.round(a.znamostStat), narod: Math.round(a.znamostNarod) },
+    socialniKapital: Math.round(a.socialniKapital),
+    integrita: Math.round(a.integrita),
+    etika: a.etika,
+    prodejnost: a.prodejnost,
+    dovednosti: s.postava.dovednosti,
+    rizika: { kriminalni: Math.round(s.pravni.kriminalniRiziko), fecAudit: Math.round(s.pravni.fecAuditRiziko) },
+    vysetrovani: s.pravni.vysetrovani.map((v) => ({ tema: v.tema, intenzita: Math.round(v.intenzita * 100) })),
+    macro: s.macro,
+    local: { mesto: s.local.mesto, spokojenost: Math.round(s.local.spokojenost), kriminalita: s.local.kriminalita, deficitPct: s.local.deficitPct },
+    npc: s.npc.map((n) => ({ id: n.id, jmeno: n.jmeno, role: n.role, prestiz: n.prestiz, vztah: n.vztah })),
+    sliby: s.sliby.map((x) => ({ id: x.id, text: x.text, stav: x.stav, lhutaKolo: x.lhutaKolo })),
+    brance: brance.splneno ? "splněna" : brance.chybejici,
+    beziKampan: s.beziKampan.typZavodu,
+    nedavneUdalosti: [...s.denik].slice(-6).map((e) => String((e.data as { zprava?: string }).zprava ?? JSON.stringify(e.data)).slice(0, 140)),
+  });
+}
+
+/* ============================================================
+ * Systémový prompt
+ * ============================================================ */
+
+export function systemovyPrompt(s: GameState): string {
+  const akce = dostupneAkce(s.funkce.uroven);
+  const katalog = akce
+    .map((a) => {
+      const params = (SPEC_PARAMETRU[a.id] ?? [])
+        .map((p) => {
+          const volby = p.volby ? `, možné hodnoty: ${p.volby.join("|")}` : "";
+          const rozsah = p.typ === "cislo" ? ` (číslo${p.min !== undefined ? ` ${p.min}..${p.max}` : ""})` : " (text)";
+          return `${p.klic}${rozsah}${volby} — ${p.napoveda}`;
+        })
+        .join("; ");
+      return `- ${a.id} (cena ${a.ap} AP): ${a.popis}${params ? ` Parametry: ${params}.` : " Bez parametrů."}`;
+    })
+    .join("\n");
+
+  return [
+    "Jste náčelník štábu a hlavní poradce hráče v politickém simulátoru USA.",
+    "Hráč vám píše volným textem, co chce tento týden (kolo) dosáhnout. Vy přeložíte jeho záměr do konkrétních herních akcí.",
+    "Odpovíte VÝHRADNĚ jedním JSON objektem, bez markdown ohraničení a bez jakéhokoli textu mimo JSON. Schéma:",
+    '{"reci": "krátká odpověď hráči v češtině (max 3 věty, věcný tón novinového zpravodajství)", "akce": [{"akce": "id_akce", "parametry": {}, "duvod": "proč tato akce"}], "udalost": {"tema": "...", "nazev": "...", "popis": "...", "dopady": {...}}}',
+    "Pravidla:",
+    "1. Pole akce: 0 až 6 akcí. Používejte POUZE akce z katalogu níže a POUZE jejich whitelisted parametry; jiné klíče budou tištěny odstraněny.",
+    `2. Celková cena akcí nesmí překročit rozpočet AP (${s.ap} AP). Pokud hráč chce víc, proveďte nejdůležitější a zbytek zmínte v „reci".`,
+    "3. Pole udalost je VOLITELNÉ: maximálně jedna vyprávěcí událost na kolo (reakce světa na hráčovo jednání). Téma jedno z: klima|migrace|geopolitika|dluh|technologie|energetika|pravni|volby|ekonomika. Dopady jsou volitelné klíče z: pokladna, socialniKapital, etika, prodejnost, znamostLokal, znamostStat, znamostNarod, spokojenost, kriminalita, inflaceDelta, hdpDelta; každý v rozsahu −1..1 (desetinné číslo, např. 0.3). Nikdy nedávejte dopady větší než 0.5 v absolutní hodnotě.",
+    "4. Buďte proaktivní: pokud hráčův záměr vyžaduje krok navíc (např. před velkým darem založit volební výbor), navrhněte ho.",
+    "5. Nikdy nevymýšlejte akce mimo katalog. Nikdy nepřidávejte parametry mimo whitelist.",
+    "",
+    "Katalog akcí pro aktuální úroveň:",
+    katalog,
+    "",
+    "Aktuální stav hry (JSON):",
+  ].join("\n");
+}
+
+/* ============================================================
+ * Parsování a čištění plánu
+ * ============================================================ */
+
+export interface PlanAkce {
+  akce: string;
+  parametry: ParametryAkce;
+  duvod: string | null;
+}
+
+export interface PlanUdalosti {
+  tema: string;
+  nazev: string;
+  popis: string;
+  dopady: Record<string, number>;
+}
+
+export interface Plan {
+  reci: string;
+  akce: PlanAkce[];
+  udalost: PlanUdalosti | null;
+}
+
+export interface ParseResult {
+  ok: boolean;
+  plan: Plan | null;
+  chyby: string[];
+  /** Akce vyřazené během čištění (pro diagnostiku). */
+  vyrazeno: string[];
+}
+
+export const MAX_AKCI_V_PLANU = 6;
+
+/** Odstraní markdown ohraničení a vrátí první JSON objekt v textu. */
+export function extrahujJson(text: string): string | null {
+  let t = text.trim();
+  t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+  const zac = t.indexOf("{");
+  const kon = t.lastIndexOf("}");
+  if (zac === -1 || kon === -1 || kon <= zac) return null;
+  return t.slice(zac, kon + 1);
+}
+
+/** Vyčistí parametry jedné akce dle whitelistu; vrací null, pokud akce není k dispozici. */
+function ocistiParametry(akceId: string, surove: unknown, chyby: string[], vyrazeno: string[]): ParametryAkce | null {
+  const def = dostupneAkceSafe(akceId);
+  if (!def) {
+    vyrazeno.push(akceId);
+    return null;
+  }
+  const spec = SPEC_PARAMETRU[akceId] ?? [];
+  const out: ParametryAkce = {};
+  if (typeof surove !== "object" || surove === null) return out;
+
+  for (const pol of spec) {
+    const v = (surove as Record<string, unknown>)[pol.klic];
+    if (v === undefined || v === null) continue;
+    if (pol.typ === "cislo") {
+      const n = typeof v === "number" ? v : Number(String(v).replace(/[, ]/g, "").replace(/\$/g, ""));
+      if (!Number.isFinite(n)) {
+        chyby.push(`Parametr ${pol.klic} akce ${akceId} není číslo; parametr ignorován.`);
+        continue;
+      }
+      const min = pol.min ?? -Number.MAX_SAFE_INTEGER;
+      const max = pol.max ?? Number.MAX_SAFE_INTEGER;
+      (out as Record<string, unknown>)[pol.klic] = Math.max(min, Math.min(max, n));
+    } else if (pol.typ === "vyber") {
+      const str = String(v).trim().toLowerCase();
+      if (!pol.volby?.includes(str)) {
+        chyby.push(`Parametr ${pol.klic} akce ${akceId} má nepovolenou hodnotu „${str}"; akce může být odmítnuta enginem.`);
+        continue;
+      }
+      (out as Record<string, unknown>)[pol.klic] = str;
+    } else {
+      const str = String(v).trim().slice(0, 300);
+      (out as Record<string, unknown>)[pol.klic] = str;
+    }
+  }
+  return out;
+}
+
+/* Dostupné akce pro aktuální úroveň — vyhledání bez závislosti na stavu. */
+let _urovenCache: string | null = null;
+let _dostupneIds: Set<string> = new Set();
+
+function dostupneAkceSafe(akceId: string): boolean {
+  return _dostupneIds.has(akceId);
+}
+
+/** Nastaví kontext dostupných akcí dle úrovně (volá parsujPlan interně). */
+function nastavKontextUrovne(uroven: string): void {
+  if (_urovenCache !== uroven) {
+    _urovenCache = uroven;
+    _dostupneIds = new Set(dostupneAkce(uroven as Parameters<typeof dostupneAkce>[0]).map((a) => a.id));
+  }
+}
+
+/**
+ * Parsuje odpověď AI do očištěného plánu. Whitelist: pouze dostupné akce,
+ * pouze povolené parametry, clamp čísel, limit počtu akcí a rozpočtu AP.
+ */
+export function parsujPlan(text: string, s: GameState): ParseResult {
+  const chyby: string[] = [];
+  const vyrazeno: string[] = [];
+  nastavKontextUrovne(s.funkce.uroven);
+
+  const json = extrahujJson(text);
+  if (!json) {
+    return { ok: false, plan: null, chyby: ["Odpověď AI neobsahuje JSON objekt."], vyrazeno: [] };
+  }
+
+  let surovina: unknown;
+  try {
+    surovina = JSON.parse(json);
+  } catch (e) {
+    return { ok: false, plan: null, chyby: [`JSON odpovědi AI je neplatný: ${(e as Error).message}`], vyrazeno: [] };
+  }
+  if (typeof surovina !== "object" || surovina === null) {
+    return { ok: false, plan: null, chyby: ["Odpověď AI není objekt."], vyrazeno: [] };
+  }
+
+  const r = surovina as Record<string, unknown>;
+  const reci = typeof r.reci === "string" ? r.reci.trim().slice(0, 1000) : "";
+
+  const planAkci: PlanAkce[] = [];
+  const surovAkce = Array.isArray(r.akce) ? r.akce : [];
+  let rozpocet = s.ap;
+
+  for (const item of surovAkce.slice(0, MAX_AKCI_V_PLANU)) {
+    if (typeof item !== "object" || item === null) continue;
+    const it = item as Record<string, unknown>;
+    const akceId = typeof it.akce === "string" ? it.akce.trim() : "";
+    const def = dostupneAkceSafe(akceId) ? najdiDefAkce(akceId) : null;
+    if (!def) {
+      vyrazeno.push(akceId || "(bez id)");
+      continue;
+    }
+    if (def.ap > rozpocet) {
+      vyrazeno.push(`${akceId} (nedostatek AP)`);
+      continue;
+    }
+    const parametry = ocistiParametry(akceId, it.parametry, chyby, vyrazeno);
+    if (parametry === null) continue;
+    rozpocet -= def.ap;
+    planAkci.push({
+      akce: akceId,
+      parametry,
+      duvod: typeof it.duvod === "string" ? it.duvod.trim().slice(0, 300) : null,
+    });
+  }
+
+  let udalost: PlanUdalosti | null = null;
+  if (r.udalost !== undefined && r.udalost !== null && typeof r.udalost === "object") {
+    const u = r.udalost as Record<string, unknown>;
+    const validace = validateAiEventProposal({
+      tema: typeof u.tema === "string" ? u.tema : undefined,
+      nazev: typeof u.nazev === "string" ? u.nazev : undefined,
+      popis: typeof u.popis === "string" ? u.popis : undefined,
+      dopady:
+        typeof u.dopady === "object" && u.dopady !== null
+          ? Object.fromEntries(Object.entries(u.dopady).filter(([, v]) => typeof v === "number"))
+          : undefined,
+    });
+    if (validace.platny) {
+      udalost = {
+        tema: String(u.tema ?? "ekonomika"),
+        nazev: String(u.nazev ?? "").trim(),
+        popis: String(u.popis ?? "").trim(),
+        dopady: validace.ocisteneDopady,
+      };
+    } else {
+      chyby.push(`Návrh události byl odmítnut validátorem: ${validace.chyby.join(" ")}`);
+    }
+  }
+
+  return { ok: true, plan: { reci, akce: planAkci, udalost }, chyby, vyrazeno };
+}
+
+function najdiDefAkce(id: string): { id: string; ap: number } | null {
+  const def = AKCE.find((a) => a.id === id);
+  return def ? { id: def.id, ap: def.ap } : null;
+}
+
+/* ============================================================
+ * Provedení plánu
+ * ============================================================ */
+
+export interface VysledekProvedeneAkce {
+  akce: string;
+  ok: boolean;
+  zprava: string;
+  varovani: string[];
+}
+
+export interface VysledekPlanu {
+  provedeno: VysledekProvedeneAkce[];
+  udalostZprava: string | null;
+  chyby: string[];
+}
+
+/** Provede očištěný plán sekvenčně přes engine. Mutuje stav s. */
+export function provedPlan(s: GameState, plan: Plan): VysledekPlanu {
+  const provedeno: VysledekProvedeneAkce[] = [];
+  for (const a of plan.akce) {
+    const v = applyPlayerAction(s, a.akce, a.parametry);
+    provedeno.push({ akce: a.akce, ok: v.ok, zprava: v.zprava, varovani: v.varovani });
+  }
+  let udalostZprava: string | null = null;
+  if (plan.udalost) {
+    const validace = validateAiEventProposal(plan.udalost);
+    const ev = applyAiEvent(s, validace, plan.udalost.nazev, plan.udalost.popis, plan.udalost.tema);
+    if (ev) {
+      udalostZprava = `Událost „${ev.nazev}" propukla ve světě hry.`;
+    }
+  }
+  return { provedeno, udalostZprava, chyby: [] };
+}
