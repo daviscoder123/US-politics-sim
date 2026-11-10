@@ -3571,7 +3571,7 @@ const PRAVIDLA: Pravidlo[] = [
     },
   },
   { slova: ["pruzkum", "sonda", "jak jsme na tom", "podpora volic"], akce: "pruzkum", duvod: "objednán průzkum veřejného mínění", parametry: (_t, s) => ({ tema: typPruzkumu(s) }) },
-  { slova: ["projev", "vystoup", "prohodit rec", "prednest"], akce: "projev", duvod: "přednesen projev" },
+  { slova: ["projev", "vystoup", "prohodit rec", "prednest", "znamost", "videt"], akce: "projev", duvod: "přednesen projev — růst známosti" },
   { slova: ["tiskovka", "tiskov", "novinar", "pro tisk"], akce: "tiskovka", duvod: "svolána tisková konference" },
   { slova: ["debata", "souboj s", "duel"], akce: "debata", duvod: "odehrána debata se soupeřem" },
   { slova: ["otisky dver", "otisky dveri", "obchazet dom", "obchaz", "obej", "sousedy", "zaklepat", "dvere"], akce: "otisky_dveri", duvod: "obcházeno sousedství — otisky dveří" },
