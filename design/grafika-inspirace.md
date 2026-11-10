@@ -127,3 +127,37 @@ deník. Zprávy endTurn přicházejí také do chatu.
 ### 4. Barvení zůstává pravidlem, ne ozdobou
 Zelená = dobře pro vás, červená = zle; jednotné napříč brancí, ukazateli
 a makrem. Minimalistické pruhy bez přebytečných čísel.
+
+---
+
+## Čtvrtá revize — user-friendly vodítka
+
+Východisko: audit cizího prototypu „Statecraft" (repozitář US-POL) ukázal, že
+silný není jeho rozsah, ale schopnost hru vést. Z prototypu jsme převzali
+myšlenku „in-tray briefings" (obálka s naléhavými memorandy) — nikoli jejich
+obsah ani scénářovou strukturu. U nás briefinky negeneruje pevný scénář, ale
+funkce `sestavBriefinky`, která je deterministicky odvozuje ze stavu hry:
+právní riziko, volební výbor, kampaň, slib v lhůtě, kariérní brána.
+
+Co přibylo v rozhraní:
+
+1. Stůl štábu — karta nad chatem s maximálně třemi doporučeními pro týden,
+   každé s tlačítkem „Zapsat do chatu". Hráč nikdy nekviká prázdným polem.
+2. Návrhové štítky pod vstupním polem před první zprávou — čtyři až pět
+   záměrů odvozených ze stavu (`navrhyZameru`), kliknutí vyplní vstup.
+3. Strukturovaný souhrn kola — odrážky místo odstavce; ChatZprava má
+   volitelné pole `seznam`.
+4. Seskupení ručních akcí do šesti oblastí s nadpisy — tlačítka zůstala
+   nezměněná, jen dostaly strukturu (SKUPINA_AKCE, PORADI_SKUPIN).
+5. Karta „Jak se hraje" v prologu — tři kroky: přirozený jazyk, AP a Stůl
+   štábu, ukončení kola v hlavičce.
+6. Archiv: Historické zákony USA s plnotextovým hledáním tolerantním k
+   diakritice a grid devíti soudců SCOTUS. Ideologické štítky zákonů
+   záměrně neutrální (bg-slate-700) — pravidlo zelené/červené barvy platí
+   výhradně pro prospěch hráče, nikoli pro popis cizího obsahu.
+
+Zahodeno z prototypu: britská kontaminace (Prime Minister, Labour, NHS,
+gilts), nedeterministické Math.random v simulačním tiku a model „AI vypíše
+čísla, UI je bez validace použije". Náš engine vše validuje (parsujPlan,
+validateAiEventProposal) a fakta historických zákonů prošla multi-source
+verifikací (Kongres, veřejné zdroje).

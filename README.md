@@ -19,6 +19,7 @@ identifikátory česky, veškerá náhodnost výhradně přes seedovaný `Rng`):
 | `rng.ts` | Deterministický generátor (mulberry32): uniform, int, range, chance, pick, normal |
 | `state.ts` | Typy stavu, 12 archetypů prologu, `vytvorNovouHru` (kalibrace makro USA 2027), `rngProStav`, startovní NPC |
 | `zakony.ts` | Databáze 30 zákonů (citace, shrnutí, efekty ve hře, zdroje) + fulltextové vyhledávání a citace |
+| `realne-zakony.ts` | Archiv 6 historických zákonů USA (IRA, CHIPS, IIJA, TCJA, ACA, BSCA) s ověřenými výsledky hlasování a náklady + 9 soudců Nejvyššího soudu; fulltextové hledání tolerantní k diakritice |
 | `law.ts` | Ústavní volitelnost (Art. I §2/§3, Art. II §1, 22. a 26. dodatek), FEC limity 2025–2026, kontrola darů (cizí peníze, koordinace, quid pro quo), sankční kaskáda FEC → skandál → DOJ → odsouzení |
 | `economy.ts` | Okunova a Phillipsova křivka, NAIRU 4,3 %, Taylorovo pravidlo pro Fed, fiskální stimul, akumulace dluhu, rating, detekce krizí, lokální tick |
 | `indicators.ts` | Kariérní brance (prahy od kandidáta 25 tis. $ po prezidenta 60 mil. $), lokální krize, data pro HUD |
@@ -44,8 +45,25 @@ Engine plán očistí a zvaliduje (`parsujPlan`):
   magnituda −1..1) a aplikuje ji `applyAiEvent`.
 
 AI tedy nikdy nesahá na stav přímo: pouze navrhuje, engine rozhoduje a vykonává.
-Hra tím zůstává deterministická a replaovatelná (93 testů invariantů). Bez API klíče lze
+Hra tím zůstává deterministická a replaovatelná (99 testů invariantů). Bez API klíče lze
 hrát ručními akcemi; klíč se ukládá jen do localStorage prohlížeče.
+
+## Vodítka pro hráče (uživatelská přívětivost)
+
+Rozhraní nevyžaduje znalost pravidel dopředu — hra hráče vede sama, ze stavu:
+
+- Stůl štábu: karta nad chatem každý týden odvodí nejnaléhavější agendu
+  (právní riziko, volební výbor, kampaň, slib v lhůtě, kariérní brána) a každý
+  bod lze jedním kliknutím zapsat do chatu jako hotový záměr.
+- Návrhové štítky: před první zprávou nabídne hra 4–5 konkrétních záměrů
+  odvozených ze stavu (sblížit se s odbory, podat návrh zákona…).
+- Strukturovaný souhrn kola: vyhodnocení týdne už není odstavec textu, ale
+  odrážkový seznam oddělených událostí.
+- Ruční akce jsou seskupeny do šesti oblastí (Finance a kampaň, Lidé a vztahy,
+  Vystoupení a pověst, Rozvoj, Správa a úřad) místo ploché stěny 25 tlačítek.
+- Prolog obsahuje kartu „Jak se hraje“ se třemi kroky ovládání.
+- Archiv rozšířen o Historické zákony USA (plnotextové hledání, diakritika
+  nevadí) a přehled devíti soudců Nejvyššího soudu včetně právních filozofií.
 
 ## Databáze zákonů
 
@@ -95,7 +113,7 @@ s podporou `--experimental-strip-types`):
 npm test
 ```
 
-Pokrytí (93 testů): determinismus Rng a replay celé hry (JSON otisk), právní invarianty
+Pokrytí (99 testů): determinismus Rng a replay celé hry (JSON otisk), právní invarianty
 (naturalizovaný nikdy prezidentem, limity FEC, cizí peníze, quid pro quo, sankční
 kaskáda), ekonomika (směr Okun/Phillips, rating, akumulace dluhu), volby (součet EV = 538,
 favorit vyhrává, vyrovnaný zápas ≈ 50 %, primárky a delegáti), sociální brána,
@@ -137,7 +155,7 @@ s ručními akcemi jako sekundární cestou:
 
 1. Deterministický rules engine + testy — hotovo.
 2. Prolog a React prototyp UI — hotovo (`app/`, `engine/engine-bundle.ts`).
-3. Napojení Mistral API — hotovo (`engine/src/ai.ts`, chat UI, 93 testů).
+3. Napojení Mistral API — hotovo (`engine/src/ai.ts`, chat UI, 99 testů).
 4. PWA obal, ukládání a načítání her, replay.
 5. Kalibrace obtížnosti a balancování kariérních brancí.
 6. Obsahová rozšíření (státy, média, sponzoři).

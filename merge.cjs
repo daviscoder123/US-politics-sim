@@ -7,7 +7,7 @@ const path = require("path");
 const SRC = "/home/user/us-politics-simulator/engine/src";
 const OUT = "/home/user/us-politics-simulator/engine/engine-bundle.ts";
 
-const ORDER = ["rng", "state", "zakony", "law", "economy", "indicators", "social", "elections", "actions", "events", "audit", "game", "ai"];
+const ORDER = ["rng", "state", "zakony", "realne-zakony", "law", "economy", "indicators", "social", "elections", "actions", "events", "audit", "game", "ai"];
 
 function extractTopLevelBlocks(lines) {
   // vrací pole {start, end, name, text} top-level deklarací (function/const/interface/type/class)
