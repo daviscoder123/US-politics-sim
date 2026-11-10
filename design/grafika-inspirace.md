@@ -161,3 +161,46 @@ gilts), nedeterministické Math.random v simulačním tiku a model „AI vypíš
 čísla, UI je bez validace použije". Náš engine vše validuje (parsujPlan,
 validateAiEventProposal) a fakta historických zákonů prošla multi-source
 verifikací (Kongres, veřejné zdroje).
+
+---
+
+## Pátá revize — místní poradce a vzhled podle politických her
+
+Východisko dvou podnětů: hra musí být plně hratelná bez API klíče a vzhled
+má soutěžit s předlohami z internetu.
+
+### Místní poradce štábu (bez klíče)
+
+Dosud chat bez klíče vrátil jen chybovou hlášku. Nově překládá záměry
+deterministický místní poradce (`engine/src/poradce.ts`): kmenová shoda
+zvládá české skloňování („konverzaci“ najde „konverzace“), vytěží částku
+(„5 000“, „$5000“, „10k“), pozná NPC podle příjmení a poradenské otázky
+(„co bych měl dělat?“) zodpoví ze stavu — vždy bez akcí. Plán jde
+stejnou cestí jako odpověď AI: sestaví Plan, engine jej validuje
+a vykoná. Mistral API zůstává volitelným vylepšením; hlavička ukazuje
+špíček režimu: „Štáb: Mistral AI“ nebo „Štáb: místní poradce“.
+
+### Vizuální předlohy a jejich promítnutí
+
+- Democracy 4 (Positech): dashboardová hustota dat, barevné výplně
+  ukazatelů, situace jako karty s akcentem. Promítnuto: gradientní
+  výplně pruhů, svislé akcentové linky u nadpisů panelů (brance amber,
+  osobní sky, makro rose), kartičky Udaj s jemným rámem.
+- Suzerain (Torpor): filmovost, výrazné akcenty, klidná typografie.
+  Promítnuto: karty Stůl štábu a modální volební noc s akcentovým
+  levým okrajem a výraznými titulky, ztmavené pozadí (slate-950).
+- The Political Machine (Stardock) a volební vysílání CNN/FOX: mapa
+  států, televizní scoreboard. Promítnuto: volební noc jako studio —
+  dvě velká pole počítadel elektorských hlasů s progress bary k 270,
+  mapa s gradientními dlaždicemi a stíny, trikolóra jako vizuální
+  motiv v hlavičce, prologu i modální kartě.
+
+### Drobná vylepšení rozhraní
+
+- Hráčské bubliny chatu: gradient emerald→teal se stínem, asimetrické
+  rohy; systémové zprávy jako „tikr“ s amber levou linkou.
+- Tlačítka ručních akcí se zdvihnou a nasvítí při najetí; cena AP
+  barvená dle tíže (1–2 sky, 3–4 amber, 5+ rose).
+- Prolog: gradient titulek přes trikolórní pruh, karty archetypů
+  s prohloubením při najetí, gradientní CTA.
+- Ukazatele AP jako tečky 2.5px — čitelnější na první pohled.

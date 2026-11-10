@@ -30,6 +30,7 @@ identifikátory česky, veškerá náhodnost výhradně přes seedovaný `Rng`):
 | `audit.ts` | Otisk stavu a replay helper (determinismus) |
 | `game.ts` | Orchestrace: `applyPlayerAction`, `endTurn` (ticky, kalendář, primárky v týdnu 24, volby v týdnu 45, stínová kariéra) |
 | `ai.ts` | Vrstva AI chatu: `systemovyPrompt` (role náčelníka štábu, katalog akcí a pravidel JSON schématu), `stavProAi` (kompaktní kontext), `parsujPlan` (whitelist akcí a parametrů, clamp, limit AP), `provedPlan` (sekvenční provedení přes engine) |
+| `poradce.ts` | Místní poradce štábu bez API klíče: deterministický překladač záměrů (kmenová shoda českých slov včetně skloňování, odvoz parametrů — částky, NPC dle jména, témata), poradenské odpovědi ze stavu; plán provádí tentýž engine jako u AI |
 
 ## AI chat (Milník 3)
 
@@ -45,8 +46,9 @@ Engine plán očistí a zvaliduje (`parsujPlan`):
   magnituda −1..1) a aplikuje ji `applyAiEvent`.
 
 AI tedy nikdy nesahá na stav přímo: pouze navrhuje, engine rozhoduje a vykonává.
-Hra tím zůstává deterministická a replaovatelná (99 testů invariantů). Bez API klíče lze
-hrát ručními akcemi; klíč se ukládá jen do localStorage prohlížeče.
+Hra tím zůstává deterministická a replaovatelná (109 testů invariantů). Bez API
+klíče přebírá záměry místní poradce (`engine/src/poradce.ts`) — hra je tak plně
+hratelná i bez klíče; klíč se ukládá jen do localStorage prohlížeče.
 
 ## Vodítka pro hráče (uživatelská přívětivost)
 
@@ -113,7 +115,7 @@ s podporou `--experimental-strip-types`):
 npm test
 ```
 
-Pokrytí (99 testů): determinismus Rng a replay celé hry (JSON otisk), právní invarianty
+Pokrytí (109 testů): determinismus Rng a replay celé hry (JSON otisk), právní invarianty
 (naturalizovaný nikdy prezidentem, limity FEC, cizí peníze, quid pro quo, sankční
 kaskáda), ekonomika (směr Okun/Phillips, rating, akumulace dluhu), volby (součet EV = 538,
 favorit vyhrává, vyrovnaný zápas ≈ 50 %, primárky a delegáti), sociální brána,
@@ -155,7 +157,7 @@ s ručními akcemi jako sekundární cestou:
 
 1. Deterministický rules engine + testy — hotovo.
 2. Prolog a React prototyp UI — hotovo (`app/`, `engine/engine-bundle.ts`).
-3. Napojení Mistral API — hotovo (`engine/src/ai.ts`, chat UI, 99 testů).
+3. Napojení Mistral API — hotovo (`engine/src/ai.ts`, chat UI, 109 testů).
 4. PWA obal, ukládání a načítání her, replay.
 5. Kalibrace obtížnosti a balancování kariérních brancí.
 6. Obsahová rozšíření (státy, média, sponzoři).
