@@ -159,6 +159,50 @@ export const ARCHETYPY: Archetyp[] = [
   { id: "inzenyr", nazev: "Inženýr", popis: "Stavební inženýr a podnikatel v infrastruktuře.", majetekUSD: 2_600_000, socialniKapital: 32, dovednosti: { finance: 7, vyjednavani: 6 }, etika: 7, prodejnost: 2, ideologie: 1 },
 ];
 
+/** Startovní osoby prologu — fiktivní, prestižní brány laděné k výchozímu kapitálu archetypů. */
+export const START_NPC: NPC[] = [
+  {
+    id: "npc-sponzor",
+    jmeno: "Charles Whitmore",
+    role: "sponzor",
+    prestiz: 45,
+    vztah: 0,
+    ochotaHistorie: [],
+    pamet: [],
+    sponzorTyp: "individual",
+  },
+  {
+    id: "npc-novinar",
+    jmeno: "Dana Reeves",
+    role: "novinar",
+    prestiz: 40,
+    vztah: 0,
+    ochotaHistorie: [],
+    pamet: [],
+    sponzorTyp: null,
+  },
+  {
+    id: "npc-politik",
+    jmeno: "Frank Kowalski",
+    role: "politik",
+    prestiz: 55,
+    vztah: 0,
+    ochotaHistorie: [],
+    pamet: [],
+    sponzorTyp: null,
+  },
+  {
+    id: "npc-aktivista",
+    jmeno: "Maya Thompson",
+    role: "aktivista",
+    prestiz: 30,
+    vztah: 0,
+    ochotaHistorie: [],
+    pamet: [],
+    sponzorTyp: null,
+  },
+];
+
 export interface NewGameParams {
   seed: number;
   jmeno: string;
@@ -236,7 +280,12 @@ export function vytvorNovouHru(p: NewGameParams): GameState {
       spokojenost: 58,
       nezamestnanost: 5.1,
     },
-    npc: [],
+    npc: START_NPC.map((n) => ({
+      ...n,
+      ochotaHistorie: [],
+      pamet: [],
+      vztah: 0,
+    })),
     sliby: [],
     udalosti: [],
     denik: [{ kolo: 1, typ: "system", data: { zprava: "Nová hra", archetyp: p.archetyp, seed: p.seed } }],

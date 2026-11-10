@@ -202,7 +202,9 @@ export function endTurn(s: GameState): SouhrnKola {
           cil,
           vyhral: vysledek.vyhral,
           share: vysledek.share,
-          detail: vysledek.detail ? { evHrac: vysledek.detail.evHrac, evSouper: vysledek.detail.evSouper } : null,
+          detail: vysledek.detail
+            ? { evHrac: vysledek.detail.evHrac, evSouper: vysledek.detail.evSouper, staty: vysledek.detail.staty }
+            : null,
         },
       });
     }

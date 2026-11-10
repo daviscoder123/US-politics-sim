@@ -63,6 +63,25 @@ test("ARCHETYPY: 12 archetypů, unikátní id, ideologie v mezích", () => {
   }
 });
 
+test("vytvorNovouHru: čtyři startovní NPC s uzavřenou bránou prestiže", () => {
+  const s = novaHra();
+  assert.equal(s.npc.length, 4);
+  assert.equal(new Set(s.npc.map((n) => n.id)).size, 4);
+  for (const n of s.npc) {
+    assert.ok(n.jmeno.length > 0);
+    assert.ok(n.prestiz > 0);
+    assert.equal(n.vztah, 0);
+    assert.equal(n.pamet.length, 0);
+  }
+  // Aktivista (prestiž 35) pod výchozím kapitálem právníka (36) bránu otvírá,
+  // sponzor (45) ne.
+  const aktivista = s.npc.find((n) => n.id === "npc-aktivista");
+  const sponzor = s.npc.find((n) => n.id === "npc-sponzor");
+  assert.ok(aktivista && sponzor);
+  assert.ok(aktivista.prestiz < s.postava.atributy.socialniKapital);
+  assert.ok(sponzor.prestiz > s.postava.atributy.socialniKapital);
+});
+
 test("rngProStav: deterministické odvození ze seedu a kola", () => {
   const s = novaHra();
   const r1 = rngProStav(s);
