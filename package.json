@@ -1,0 +1,10 @@
+{
+  "name": "us-politics-simulator",
+  "version": "0.1.0",
+  "description": "Politický simulátor USA — deterministický rules engine (kariéra od podnikatele po prezidenta)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --experimental-strip-types \"test/*.test.ts\""
+  },
+  "license": "MIT"
+}

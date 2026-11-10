@@ -1,1 +1,99 @@
-# US-politics-sim
+# Politický simulátor USA
+
+Dlouhodobý kariérní simulátor americké politiky: cesta od individua (např. zakladatele firmy)
+přes komunální a exekutivní funkce až po prezidentský úřad. Hra je primárně ovládána AI chatem
+(Mistral API), ale veškerá herní logika je vykonávána deterministickým rules enginem, který
+AI návrhy pouze validuje a aplikuje. Vysoká obtížnost („dračí doupě“); prohra nikdy není
+trvalým koncem — po odsouzení či prohrách hráč pokračuje ve stínové kariéře.
+
+Herní čas: 1 kolo = 1 herní týden; realistická délka herní kariéry je 500–800 kol (12–16 let).
+Cílová platforma: PWA (desktop i mobil).
+
+## Architektura enginu
+
+Moduly ve `engine/src/` (jazyk TypeScript, strippatelná syntaxe bez enumů a namespaces,
+identifikátory česky, veškerá náhodnost výhradně přes seedovaný `Rng`):
+
+| Modul | Odpovědnost |
+| --- | --- |
+| `rng.ts` | Deterministický generátor (mulberry32): uniform, int, range, chance, pick, normal |
+| `state.ts` | Typy stavu, 12 archetypů prologu, `vytvorNovouHru` (kalibrace makro USA 2027), `rngProStav` |
+| `zakony.ts` | Databáze 30 zákonů (citace, shrnutí, efekty ve hře, zdroje) + fulltextové vyhledávání a citace |
+| `law.ts` | Ústavní volitelnost (Art. I §2/§3, Art. II §1, 22. a 26. dodatek), FEC limity 2025–2026, kontrola darů (cizí peníze, koordinace, quid pro quo), sankční kaskáda FEC → skandál → DOJ → odsouzení |
+| `economy.ts` | Okunova a Phillipsova křivka, NAIRU 4,3 %, Taylorovo pravidlo pro Fed, fiskální stimul, akumulace dluhu, rating, detekce krizí, lokální tick |
+| `indicators.ts` | Kariérní brance (prahy od kandidáta 25 tis. $ po prezidenta 60 mil. $), lokální krize, data pro HUD |
+| `social.ts` | Prestižní brána konverzací `prestiž − (sociální kapitál + vztah×5 + bonus úřadu)`, sliby a jejich lhůty |
+| `elections.ts` | Utility model voliče, Monte Carlo, primárky (práh 15 %, bonus vítěze), Electoral College (51 států, 538 volitelů), kalendář voleb |
+| `actions.ts` | Katalog 24 akcí (prolog, kampaň, obec, kongres/guverner/prezident, ilegální akce), validace včetně právních varování |
+| `events.ts` | Tematické šablony událostí (klima, migrace, geopolitika, dluh, technologie, energetika) a `validateAiEventProposal` — schema validace návrhů AI (povolené klíče efektů, magnituda −1..1) |
+| `audit.ts` | Otisk stavu a replay helper (determinismus) |
+| `game.ts` | Orchestrace: `applyPlayerAction`, `endTurn` (ticky, kalendář, primárky v týdnu 24, volby v týdnu 45, stínová kariéra) |
+
+## Databáze zákonů
+
+Součástí enginu je databáze 30 záznamů (`engine/src/zakony.ts`), každý s citací, názvem,
+kategorií, shrnutím, efekty ve hře a zdroji. Zahrnuje:
+
+- Ústavu USA: Art. I §2/§3 (věkové prahy Kongresu), Art. II §1 (natural-born, 35 let,
+  emoluments), dodatky XV, XIX, XXII (max dvě zvolení), XXV, XXVI.
+- Volební právo: FECA 1971, 52 U.S.C. §30116 (limity darů), §30118 (korporace a odbory),
+  §30121 (cizí peníze), 11 C.F.R. §§100.5, 109, 110.4, BCRA 2002, Hatch Act.
+- Precedenty: Buckley v. Valeo, Citizens United v. FEC, SpeechNow.org v. FEC,
+  U.S. Term Limits v. Thornton.
+- Trestní: 18 U.S.C. §201 (úplatky federálních úředníků), §666 (programy s federální
+  participací — městská úroveň, práh 5 000 $).
+- Exekutivu a finance: Impoundment Control Act 1974, Anti-Deficiency Act, právo států
+  (kvalifikace), home rule.
+
+Engine do herních zpráv automaticky vkládá citace přes `citujZakony(ids)`, takže každé
+právní rozhodnutí ve hře má odkaz do kodexu.
+
+## Právní kalibrace (ověřeno z více zdrojů)
+
+- FEC limity 2025–2026: jednotlivec 3 500 $ na volbu (7 000 $ za cyklus), PAC 5 000 $,
+  strana 44 300 $ ročně, registrační práh výboru 5 000 $, evidence nad 200 $, hotovost
+  do 100 $, anonymní do 50 $. Super PAC neomezeně, ale bez koordinace. Vlastní financování
+  neomezeně, hlášené (Buckley v. Valeo). Zdroje: fec.gov, 52 U.S.C. §30101 a násl.
+  (uscode.house.gov), eCFR titul 11.
+- Ústavní volitelnost: prezident natural-born občan, 35 let, 14 let rezidence, max dvě
+  zvolení (22. dodatek); Sněmovna 25 let / 7 let občanství; Senát 30 / 9; komunální funkce
+  dle práva státu (zpravidla 18 let). Naturalizovaný občan nesmí být prezidentem ani
+  viceprezidentem, smí však usednout do Kongresu a ve většině států i na guvernérský post.
+- 18 U.S.C. §201/§666: quid pro quo je federální zločin; u programů s federální
+  participací (§666) je práh hodnoty 5 000 $.
+
+## Ekonomická kalibrace (podzim 2026)
+
+Výchozí makro nové hry: HDP růst 2,1 %, inflace CPI 3,7 %, nezaměstnanost 4,2 %,
+Fed ~3,88 %, deficit 6,2 % HDP (CBO, FY2026), veřejný dluh ~100 % HDP, rating AA+.
+Model používá Okunovu a Phillipsovu křivku (NAIRU 4,3 %) a Taylorovo pravidlo.
+
+## Testy
+
+Deterministické testy invariantů (node:test, bez externích závislostí, Node ≥ 22
+s podporou `--experimental-strip-types`):
+
+```bash
+npm test
+```
+
+Pokrytí: determinismus Rng a replay celé hry (JSON otisk), právní invarianty
+(naturalizovaný nikdy prezidentem, limity FEC, cizí peníze, quid pro quo, sankční
+kaskáda), ekonomika (směr Okun/Phillips, rating, akumulace dluhu), volby (součet EV = 538,
+favorit vyhrává, vyrovnaný zápas ≈ 50 %, primárky a delegáti), sociální brána,
+AP rozpočet akcí a volební scénáře end-to-end.
+
+## Plán milníků
+
+1. Deterministický rules engine + testy (tento repozitář) — hotovo.
+2. Prolog a React prototyp UI (AI chat, dashboard, inbox krizových karet) — viz `design/grafika-inspirace.md`.
+3. Napojení Mistral API (AI generuje scénáře; engine je validuje přes `validateAiEventProposal`).
+4. PWA obal, ukládání a načítání her, replay.
+5. Kalibrace obtížnosti a balancování kariérních brancí.
+6. Obsahová rozšíření (státy, média, sponzoři).
+7. Nasazení pro osobní použití.
+
+## Poznámka k obsahu
+
+Hra používá fiktivní osoby, města a média; státy, instituce a zákony jsou reálné.
+Hra respektuje americké právo v rozsahu herního modelu a nejde o právní poradenství.
