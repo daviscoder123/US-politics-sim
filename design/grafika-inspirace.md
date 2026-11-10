@@ -99,3 +99,31 @@ malých tlačítek: primární akce jsou velké, minimálně 44 px na dotek.
   (demotion na outsidera, možnost návratu).
 - Redakční humor britského typu — u nás věcný, formalizovaný tón s českými
   fiktivními titulky (např. „Lakeside Chronicle“).
+
+## Třetí revize — AI-chat-first (Milník 3)
+
+Zpětná vazba hráče: hra působila uzavřeně (klikání po kartách akcí) a přehledně
+přeplácaně. Závěry a promítnutí do UI:
+
+### 1. Chat jako hlavní ovládání, karty jen sekundárně
+Hráč nevybírá z katalogu, ale formuluje záměr přirozeným jazykem; AI náčelník
+štábu (Mistral) plán převede do JSON schématu a engine jej validuje a vykonává.
+Volnost rozhodování tak roste bez ohrožení determinismu: AI navrhuje, engine
+rozhoduje (whitelist akcí a parametrů, rozpočet AP, validace událostí).
+- Karty ručních akcí zůstávají sbalené v sekci „Ruční akce“ jako záložní cesta
+  a bez API klíče.
+
+### 2. Jedna obrazovka, tři kotvy
+Hlavní scéna = chat vlevo (dominantní), pravý panel = brance, osobní ukazatele,
+makro. Vše ostatní (kodex, sliby, lidé, deník) sbaleno do <details> „Archiv“.
+Hlavička zredukována na jednu řádku: identita, finance, kolo/týden, AP,
+Ukončit kolo, nastavení AI, nová hra.
+
+### 3. Zpětná vazba v konverzaci
+Výsledky akcí (✓/✗ se zprávami enginu, varování, vyřazené položky plánu)
+se zobrazují přímo v bublinách chatu — hráč nemusí sledovat novýňský pás ani
+deník. Zprávy endTurn přicházejí také do chatu.
+
+### 4. Barvení zůstává pravidlem, ne ozdobou
+Zelená = dobře pro vás, červená = zle; jednotné napříč brancí, ukazateli
+a makrem. Minimalistické pruhy bez přebytečných čísel.

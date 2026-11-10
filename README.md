@@ -17,7 +17,7 @@ identifikátory česky, veškerá náhodnost výhradně přes seedovaný `Rng`):
 | Modul | Odpovědnost |
 | --- | --- |
 | `rng.ts` | Deterministický generátor (mulberry32): uniform, int, range, chance, pick, normal |
-| `state.ts` | Typy stavu, 12 archetypů prologu, `vytvorNovouHru` (kalibrace makro USA 2027), `rngProStav` |
+| `state.ts` | Typy stavu, 12 archetypů prologu, `vytvorNovouHru` (kalibrace makro USA 2027), `rngProStav`, startovní NPC |
 | `zakony.ts` | Databáze 30 zákonů (citace, shrnutí, efekty ve hře, zdroje) + fulltextové vyhledávání a citace |
 | `law.ts` | Ústavní volitelnost (Art. I §2/§3, Art. II §1, 22. a 26. dodatek), FEC limity 2025–2026, kontrola darů (cizí peníze, koordinace, quid pro quo), sankční kaskáda FEC → skandál → DOJ → odsouzení |
 | `economy.ts` | Okunova a Phillipsova křivka, NAIRU 4,3 %, Taylorovo pravidlo pro Fed, fiskální stimul, akumulace dluhu, rating, detekce krizí, lokální tick |
@@ -28,6 +28,24 @@ identifikátory česky, veškerá náhodnost výhradně přes seedovaný `Rng`):
 | `events.ts` | Tematické šablony událostí (klima, migrace, geopolitika, dluh, technologie, energetika) a `validateAiEventProposal` — schema validace návrhů AI (povolené klíče efektů, magnituda −1..1) |
 | `audit.ts` | Otisk stavu a replay helper (determinismus) |
 | `game.ts` | Orchestrace: `applyPlayerAction`, `endTurn` (ticky, kalendář, primárky v týdnu 24, volby v týdnu 45, stínová kariéra) |
+| `ai.ts` | Vrstva AI chatu: `systemovyPrompt` (role náčelníka štábu, katalog akcí a pravidel JSON schématu), `stavProAi` (kompaktní kontext), `parsujPlan` (whitelist akcí a parametrů, clamp, limit AP), `provedPlan` (sekvenční provedení přes engine) |
+
+## AI chat (Milník 3)
+
+Hlavním ovládáním hry je přirozený jazyk. Hráč napíše štábu svůj záměr („zajisti mi sponzory
+a zvedni známost ve státě“) a AI (Mistral API, model `mistral-small-latest` s možností změny)
+přeloží záměr do striktního JSON schématu: `{reci, akce: [{akce, parametry, duvod}], udalost?}`.
+Engine plán očistí a zvaliduje (`parsujPlan`):
+
+- pouze akce dostupné na aktuální úrovni úřadu (whitelist dle `dostupneAkce`);
+- pouze whitelisted parametry, číselné clamp, výčtové hodnoty;
+- limit 6 akcí a celkový rozpočet AP;
+- volitelná vyprávěcí událost projde `validateAiEventProposal` (povolené klíče efektů,
+  magnituda −1..1) a aplikuje ji `applyAiEvent`.
+
+AI tedy nikdy nesahá na stav přímo: pouze navrhuje, engine rozhoduje a vykonává.
+Hra tím zůstává deterministická a replaovatelná (93 testů invariantů). Bez API klíče lze
+hrát ručními akcemi; klíč se ukládá jen do localStorage prohlížeče.
 
 ## Databáze zákonů
 
@@ -77,35 +95,49 @@ s podporou `--experimental-strip-types`):
 npm test
 ```
 
-Pokrytí: determinismus Rng a replay celé hry (JSON otisk), právní invarianty
+Pokrytí (93 testů): determinismus Rng a replay celé hry (JSON otisk), právní invarianty
 (naturalizovaný nikdy prezidentem, limity FEC, cizí peníze, quid pro quo, sankční
 kaskáda), ekonomika (směr Okun/Phillips, rating, akumulace dluhu), volby (součet EV = 538,
 favorit vyhrává, vyrovnaný zápas ≈ 50 %, primárky a delegáti), sociální brána,
-AP rozpočet akcí a volební scénáře end-to-end.
+AP rozpočet akcí, volební scénáře end-to-end, vrstva AI chatu (parsování plánu,
+whitelist akcí a parametrů, rozpočet AP, validace událostí, replay AI plánu)
+a bitová identita sloučeného `engine-bundle.ts` s modulárním enginem.
 
-## Aplikace (Milník 2)
+## Aplikace (Milník 2 a 3)
 
-React prototyp UI ve `app/` (české rozhraní, temný design, responzivní):
+React UI ve `app/` (české rozhraní, temný design, responzivní), ovládání AI chatem
+s ručními akcemi jako sekundární cestou:
 
-- `App.tsx` — prolog (jméno, věk, domovský stát, seed, 12 karet archetypů), hlavička
-  s identitou postavy, penězi a časem (kolo/týden/rok, AP jako tečky), novinový pás
-  zpětné vazby, panel kariérních brancí s chybějícími prahy, makro dashboard USA,
-  záložky Akce / Inbox kola / Kodex zákonů / Sliby a lidé, dlaždicová mapa USA
-  (51 států + DC, 538 volitelů) v modálním okně volební noci, osobní ukazatele
-  s pravidlem „zelená vždy dobře pro vás", autosave do localStorage.
+- `App.tsx` — prolog (jméno, věk, domovský stát, seed, 12 karet archetypů), kompaktní
+  hlavička (identita, finance, kolo/týden, AP, ukončení kola), hlavní panel = chat se
+  štábem (zprávy hráč/AI s výsledky provedených akcí, nastavení API klíče Mistral a
+  modelu v localStorage), boční panel = kariérní brance, osobní ukazatele a makro
+  (pravidlo „zelená vždy dobře pro vás"), sbalené sekce Ruční akce (karty akcí
+  s modálními formuláři) a Archiv (kodex zákonů s fulltextem, sliby, lidé, deník),
+  dlaždicová mapa USA (51 států + DC, 538 volitelů) v modálním okně volební noci,
+  autosave do localStorage.
 - Importuje výhradně z `engine/engine-bundle.ts` — sloučený engine
-  (generovaný z modulů `engine/src/`; replay bitově identický, ověřeno testem
-  `test/bundle.test.ts`).
+  (generovaný z modulů `engine/src/` skriptem `merge.cjs`; replay bitově identický,
+  ověřeno testem `test/bundle.test.ts`).
 - Spuštění lokálně (Node ≥ 20):
   `cd app && npm install && npm run dev` (Vite + React 18).
+- Získání API klíče: zaregistrujte se na console.mistral.ai, vytvořte API klíč
+  a vložte jej v aplikaci v panelu „AI“ v hlavičce. Klíč zůstává v prohlížeči.
 - Grafické principy: viz `design/grafika-inspirace.md` (Prime Minister UK Politics
-  Sim a ReLife).
+  Sim, ReLife a zásady AI-chat-first zjednodušení).
+
+## Vývojářské skripty
+
+- `node merge.cjs` — regeneruje `engine/engine-bundle.ts` z `engine/src/*.ts`
+  (pořadí modulů včetně `ai.ts`, deduplikace identických deklarací).
+- `node overeni.cjs` — rychlá kontrola balance závorek, přítomnosti importovaných
+  exportů v bundlu a souladu mapy USA s `STATY_EV`.
 
 ## Plán milníků
 
-1. Deterministický rules engine + testy (tento repozitář) — hotovo.
-2. Prolog a React prototyp UI — hotovo (`app/`, `engine/engine-bundle.ts`, 80 testů).
-3. Napojení Mistral API (AI generuje scénáře; engine je validuje přes `validateAiEventProposal`).
+1. Deterministický rules engine + testy — hotovo.
+2. Prolog a React prototyp UI — hotovo (`app/`, `engine/engine-bundle.ts`).
+3. Napojení Mistral API — hotovo (`engine/src/ai.ts`, chat UI, 93 testů).
 4. PWA obal, ukládání a načítání her, replay.
 5. Kalibrace obtížnosti a balancování kariérních brancí.
 6. Obsahová rozšíření (státy, média, sponzoři).
