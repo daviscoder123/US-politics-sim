@@ -419,8 +419,8 @@ function Pruh({ label, hodnota, barva, zprava }: { label: string; hodnota: numbe
   );
 }
 
-function Karta({ deti, className }: { deti: React.ReactNode; className?: string }) {
-  return <div className={`rounded-2xl border border-[#4d3b1d]/70 bg-[#2a2013]/70 p-4 shadow-lg ${className ?? ""}`}>{deti}</div>;
+function Karta({ children, className }: { children?: React.ReactNode; className?: string }) {
+  return <div className={`rounded-2xl border border-[#4d3b1d]/70 bg-[#2a2013]/70 p-4 shadow-lg ${className ?? ""}`}>{children}</div>;
 }
 
 function Udaj({ label, hodnota, barva }: { label: string; hodnota: string; barva: Barva }) {
@@ -887,7 +887,7 @@ export default function App() {
       const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.klic}` },
-        body: JSON.stringify({ model: ai.model, messages: zpravy, temperature: 0.6, max_tokens: 900 }),
+        body: JSON.stringify({ model: ai.model, messages: zpravy, temperature: 0.6, max_tokens: 1400 }),
       });
       if (!res.ok) {
         const detail = res.status === 401 ? "Neplatný API klíč." : res.status === 429 ? "Překročen limit požadavků." : `HTTP ${res.status}.`;

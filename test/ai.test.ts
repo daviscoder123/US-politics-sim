@@ -158,10 +158,27 @@ test("parsujPlan: událost validní i nevalidní", () => {
   assert.equal(spatne.plan!.udalost, null, "magnituda > 1 → odmítnuto validátorem");
 });
 
-test("parsujPlan: prázdná / nevalidní odpověď", () => {
+test("parsujPlan: volný text bez JSON se přijímá jako vyprávění; prázdná odpověď je chyba", () => {
   const s = novaHra();
-  assert.equal(parsujPlan("pomoc, žádný json", s).ok, false);
-  assert.equal(parsujPlan('{"reci": "x", "akce": "ne", }', s).ok, false);
+  /* Herní mistr odpověděl bez JSON obálky — akceptujeme jako konverzační plán. */
+  const volny = parsujPlan("Sedíte v zákouřené hospodě a starosta vás sleduje přes okraj sklenice.", s);
+  assert.ok(volny.ok, "volný text je platné vyprávění");
+  assert.equal(volny.plan?.akce.length, 0);
+  assert.equal(parsujPlan("   ", s).ok, false, "prázdná odpověď je chyba");
+  const zachraneny = parsujPlan('{"reci": "x", "akce": "ne", }', s);
+  assert.equal(zachraneny.ok, true, "rozbitý JSON se zachovalým vyprávěním se zachrání jako konverzace");
+  assert.equal(zachraneny.plan?.reci, "x");
+});
+
+test("parsujPlan: useknutý JSON (limit tokenů) se opraví a použije", () => {
+  const s = novaHra();
+  const plne = JSON.stringify({ reci: "Zakládáte výbor a město šeptá.", akce: [{ akce: "networking" }, { akce: "projev" }] });
+  for (const podil of [0.5, 0.6, 0.8]) {
+    const useknuto = plne.slice(0, Math.floor(plne.length * podil));
+    const r = parsujPlan(useknuto, s);
+    assert.ok(r.ok, "useknutý JSON na " + podil + " se opraví");
+    assert.ok((r.plan?.reci ?? "").length > 0, "vyprávění se zachová");
+  }
 });
 
 test("provedPlan: provede akce a vede deník", () => {

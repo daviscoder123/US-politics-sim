@@ -10,10 +10,26 @@ const bundle = fs.readFileSync("/home/user/us-politics-simulator/engine/engine-b
 /* --- 1) token balance --- */
 function balance(text) {
   const stack = [];
-  let mode = "code"; // code | str' | str" | tpl | line | block
+  let mode = "code"; // code | str' | str" | tpl | line | block | regex | charclass
   let tplDepth = 0;
   const pairs = { ")": "(", "]": "[", "}": "{" };
   let line = 1;
+  /* Poslední významný znak a slovo před ním — podle nich rozhodneme,
+   * zda lomítko začíná literál regulárního výrazu, nebo je dělením. */
+  let prev = "";
+  let prevWord = "";
+  const klicova = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "case", "do", "else", "yield", "await", "throw"]);
+  const zacatekRegexu = () => {
+    if (prev === "") return true;
+    if (prev === "<") return false; // </div> apod. — JSX uzavírací tag, ne regex
+    if (prev === ")") return false;
+    if (prev === "]") return false;
+    if (prev === "}") return false; // /> — JSX samouzavírací tag, ne regex
+    if (prev === '"' || prev === "'" || prev === "`") return false; // za uzavřeným řetězcem nemůže být regex
+    if (/[0-9]/.test(prev)) return false;
+    if (/[a-zA-Z_$]/.test(prev)) return klicova.has(prevWord);
+    return true;
+  };
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     const n = text[i + 1];
@@ -28,19 +44,39 @@ function balance(text) {
       if (c === "$" && n === "{") { stack.push({ ch: "{", line, tpl: true }); mode = "code"; i++; continue; }
       continue;
     }
+    if (mode === "regex") {
+      if (c === "\\") { i++; continue; }
+      if (c === "[") { mode = "charclass"; continue; }
+      if (c === "/") { mode = "code"; prev = "/"; prevWord = ""; continue; }
+      continue;
+    }
+    if (mode === "charclass") {
+      if (c === "\\") { i++; continue; }
+      if (c === "]") mode = "regex";
+      continue;
+    }
     // code
     if (c === "/" && n === "/") { mode = "line"; i++; continue; }
     if (c === "/" && n === "*") { mode = "block"; i++; continue; }
-    if (c === "'") { mode = "str'"; continue; }
-    if (c === '"') { mode = 'str"'; continue; }
-    if (c === "`") { mode = "tpl"; continue; }
-    if (c === "(" || c === "[" || c === "{") { stack.push({ ch: c, line, tpl: false }); continue; }
+    if (c === "/") {
+      if (zacatekRegexu()) { mode = "regex"; prev = ""; prevWord = ""; continue; }
+      prev = "/"; prevWord = ""; continue;
+    }
+    if (c === "'") { mode = "str'"; prev = "'"; prevWord = ""; continue; }
+    if (c === '"') { mode = 'str"'; prev = '"'; prevWord = ""; continue; }
+    if (c === "`") { mode = "tpl"; prev = "`"; prevWord = ""; continue; }
+    if (c === "(" || c === "[" || c === "{") { stack.push({ ch: c, line, tpl: false }); prev = c; prevWord = ""; continue; }
     if (c === ")" || c === "]" || c === "}") {
       const top = stack.pop();
       if (!top || top.ch !== pairs[c]) {
         return `NEVYVÁŽENO: '${c}' na řádku ${line}, očekáváno '${top ? top.ch : "nic"}' (otevřeno na řáku ${top ? top.line : "?"})`;
       }
       if (top.tpl && c === "}") mode = "tpl";
+      prev = c; prevWord = ""; continue;
+    }
+    if (!/\s/.test(c)) {
+      prevWord = /[a-zA-Z_$0-9]/.test(c) ? (/[a-zA-Z_$0-9]/.test(prev) ? prevWord + c : c) : "";
+      prev = c;
     }
   }
   if (stack.length > 0) return `NEVYVÁŽENO: neuzavřeno ${stack.length} závorek, první na řádku ${stack[0].line} (${stack[0].ch})`;
