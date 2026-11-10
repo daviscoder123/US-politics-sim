@@ -3,6 +3,8 @@ import {
   ARCHETYPY,
   BRANCE,
   STATY_EV,
+  TYDEN_PRIMAREK,
+  TYDEN_VOLEB,
   vytvorNovouHru,
   applyPlayerAction,
   endTurn,
@@ -705,6 +707,7 @@ export default function App() {
   const [volebniData, setVolebniData] = useState<VolebniData | null>(null);
   const [hledani, setHledani] = useState("");
   const [hledaniHistorie, setHledaniHistorie] = useState("");
+  const [stavKlice, setStavKlice] = useState<{ stav: "idne" | "kontrola" | "ok" | "chyba"; zprava: string }>({ stav: "idne", zprava: "" });
   const konecChatu = useRef<HTMLDivElement | null>(null);
 
   /* Načtení uložené hry a nastavení AI */
@@ -738,6 +741,7 @@ export default function App() {
 
   function ulozAi(n: AiNastaveni) {
     setAi(n);
+    setStavKlice({ stav: "idne", zprava: "" });
     try {
       window.localStorage.setItem(KLIC_STORAGE_AI, JSON.stringify(n));
     } catch {
@@ -777,6 +781,31 @@ export default function App() {
 
   function cloneStav(s: GameState): GameState {
     return JSON.parse(JSON.stringify(s)) as GameState;
+  }
+
+  /* --- Ověření API klíče Mistral (integrace pro GitHub Pages) --- */
+  async function overKlic() {
+    if (!ai.klic) {
+      setStavKlice({ stav: "chyba", zprava: "Nejprve vložte klíč z console.mistral.ai." });
+      return;
+    }
+    setStavKlice({ stav: "kontrola", zprava: "Ověřuji klíč…" });
+    try {
+      const res = await fetch("https://api.mistral.ai/v1/models", { headers: { Authorization: `Bearer ${ai.klic}` } });
+      if (res.ok) {
+        const data = (await res.json()) as { data?: { id?: string }[] };
+        const pocet = data.data?.length ?? 0;
+        setStavKlice({ stav: "ok", zprava: `Klíč je platný — štáb odpovídá přes Mistral AI (${pocet} modelů k dispozici).` });
+      } else if (res.status === 401) {
+        setStavKlice({ stav: "chyba", zprava: "Klíč není platný (401) — zkontrolujte správnost." });
+      } else if (res.status === 429) {
+        setStavKlice({ stav: "chyba", zprava: "Překročen limit požadavků (429) — zkuste to za chvíli." });
+      } else {
+        setStavKlice({ stav: "chyba", zprava: `Služba odpověděla HTTP ${res.status}.` });
+      }
+    } catch {
+      setStavKlice({ stav: "chyba", zprava: "Spojení se nezdařilo — zkontrolujte připojení k internetu." });
+    }
   }
 
   /* --- AI chat: odeslání zprávy --- */
@@ -1007,6 +1036,15 @@ export default function App() {
             Kampaň <span className="font-bold text-emerald-400">{usd(hra.finance.pokladnaKampane)}</span>
             <span className="mx-1 text-slate-600">|</span>
             Majetek <span className="font-bold text-white">{usd(a.majetekUSD)}</span>
+            {hra.beziKampan.typZavodu && (
+              <span className="ml-3 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+                {hra.tyden < TYDEN_PRIMAREK
+                  ? `Do primárek ${TYDEN_PRIMAREK - hra.tyden} týdnů`
+                  : hra.tyden < TYDEN_VOLEB
+                    ? `Do voleb ${TYDEN_VOLEB - hra.tyden} týdnů`
+                    : "Volební týden"}
+              </span>
+            )}
           </div>
           <div className="ml-auto flex items-center gap-3">
             <span
@@ -1062,6 +1100,17 @@ export default function App() {
               </label>
               <div className="text-xs text-slate-400 sm:col-span-1 self-end">
                 Klíč se ukládá pouze do vašeho prohlížeče (localStorage). Bez klíče překládá záměry místní poradce štábu; AI navrhuje plán, engine jej vždy validuje a vykonává.
+                <button
+                  onClick={overKlic}
+                  className="mt-2 w-full rounded-lg border border-emerald-500/60 px-3 py-1.5 text-xs font-bold text-emerald-300 transition-colors hover:bg-emerald-500/10"
+                >
+                  {stavKlice.stav === "kontrola" ? "Ověřuji…" : "Ověřit klíč Mistral"}
+                </button>
+                {stavKlice.zprava && (
+                  <p className={`mt-1 rounded px-2 py-1 text-[11px] ${stavKlice.stav === "ok" ? "bg-emerald-900/50 text-emerald-200" : stavKlice.stav === "chyba" ? "bg-rose-900/50 text-rose-200" : "bg-slate-900/60 text-slate-300"}`}>
+                    {stavKlice.zprava}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1071,6 +1120,17 @@ export default function App() {
       <main className="mx-auto mt-4 grid max-w-6xl grid-cols-1 gap-4 px-4 lg:grid-cols-3">
         {/* Hlavní panel: chat se štábem */}
         <section className="lg:col-span-2">
+          {hra.udalosti.length > 0 && (() => {
+            const u = hra.udalosti[hra.udalosti.length - 1];
+            return (
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-600/60 bg-gradient-to-r from-slate-800/90 to-slate-900/80 px-3 py-2 shadow-md">
+                <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-slate-950">Zpravodajství</span>
+                <span className="truncate text-xs text-slate-300">
+                  <b className="text-white">{u.nazev}.</b> {u.popis}
+                </span>
+              </div>
+            );
+          })()}
           {briefinkyStavu.length > 0 && (
             <Karta className="mb-3 border-l-4 border-l-amber-400">
               <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-white">

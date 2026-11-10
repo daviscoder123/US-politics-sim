@@ -9,6 +9,28 @@ trvalým koncem — po odsouzení či prohrách hráč pokračuje ve stínové k
 Herní čas: 1 kolo = 1 herní týden; realistická délka herní kariéry je 500–800 kol (12–16 let).
 Cílová platforma: PWA (desktop i mobil).
 
+## GitHub Pages (okamžitě hratelné)
+
+Repozitář obsahuje generátor statického webu bez bundleru (`sestav-static.cjs`):
+
+```bash
+node sestav-static.cjs   # vygeneruje site/app.js + site/index.html + site/404.html
+```
+
+Větev `gh-pages` obsahuje výstup v kořeni; web běží na adrese
+`https://daviscoder123.github.io/US-politics-sim/`. Stránka načítá React,
+ReactDOM, @babel/standalone (transform TypeScript/JSX v prohlížeči) a Tailwind
+z veřejných CDN; veškerá herní logika je v jediném `app.js`.
+
+### Integrace Mistral AI
+
+Hru lze hrát zcela bez klíče přes místního poradce štábu (`engine/src/poradce.ts`).
+S klíčem z [console.mistral.ai](https://console.mistral.ai) funguje plnohodnotná
+AI vrstva: klíč se vkládá v nastavení štábu (uložen jen v localStorage prohlížeče),
+tlačítkem „Ověřit klíč Mistral“ se provede kontrola vůči `api.mistral.ai/v1/models`.
+API Mistral podporuje CORS (`access-control-allow-origin: *`), takže prohlížeč
+volá API přímo — žádný server ani proxy není potřeba.
+
 ## Architektura enginu
 
 Moduly ve `engine/src/` (jazyk TypeScript, strippatelná syntaxe bez enumů a namespaces,
@@ -57,6 +79,10 @@ Rozhraní nevyžaduje znalost pravidel dopředu — hra hráče vede sama, ze st
 - Stůl štábu: karta nad chatem každý týden odvodí nejnaléhavější agendu
   (právní riziko, volební výbor, kampaň, slib v lhůtě, kariérní brána) a každý
   bod lze jedním kliknutím zapsat do chatu jako hotový záměr.
+- Zpravodajský pás: nejnovější událost světa hry se zobrazuje nad chatem
+  jako newsflash (neutralní šedý accent, barevné pravidlo platí jen pro hráče).
+- Odpočet voleb: při běžící kampani hlavička ukazuje týdny do primárek
+  (týden 24) a do všeobecných voleb (týden 45).
 - Návrhové štítky: před první zprávou nabídne hra 4–5 konkrétních záměrů
   odvozených ze stavu (sblížit se s odbory, podat návrh zákona…).
 - Strukturovaný souhrn kola: vyhodnocení týdne už není odstavec textu, ale
