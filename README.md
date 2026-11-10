@@ -18,9 +18,14 @@ node sestav-static.cjs   # vygeneruje site/app.js + site/index.html + site/404.h
 ```
 
 Větev `gh-pages` obsahuje výstup v kořeni; web běží na adrese
-`https://daviscoder123.github.io/US-politics-sim/`. Stránka načítá React,
-ReactDOM, @babel/standalone (transform TypeScript/JSX v prohlížeči) a Tailwind
-z veřejných CDN; veškerá herní logika je v jediném `app.js`.
+`https://daviscoder123.github.io/US-politics-sim/`. Web je sebehostující:
+React a ReactDOM jsou vestavěné (`site/react*.js`), TypeScript/JSX se překládá
+při sestavování (`node sestav-static.cjs`) — v prohlížeči běží jen hotový
+plain JavaScript, bez runtime Babelu a bez CDN unpkg. Jedinou externí službou
+zůstává Tailwind (s náhradní adresou a viditelným varováním při výpadku).
+Chyby načítání i běhu aplikace se zobrazují přímo na stránce v diagnostickém
+panelu. Pro sestavení lokálně je potřeba `vendor/babel.min.js` (skript si jej
+při prvním spuštění stáhne z unpkg a dále používá lokální kopii).
 
 ### Integrace Mistral AI
 
