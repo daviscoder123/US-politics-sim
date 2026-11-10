@@ -1,20 +1,23 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ARCHETYPY,
   BRANCE,
   STATY_EV,
-  START_NPC,
   vytvorNovouHru,
   applyPlayerAction,
   endTurn,
   dostupneAkce,
   vyhodnotBranci,
   hledejZakony,
+  systemovyPrompt,
+  stavProAi,
+  parsujPlan,
+  provedPlan,
   type GameState,
 } from "../engine/engine-bundle.ts";
 
 /* ============================================================
- * Pomocné formátování
+ * Pomocné formátování a barevné pravidlo (zelená = dobře pro vás)
  * ============================================================ */
 
 const FORMAT_USD = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -37,16 +40,6 @@ const NAZVY_UROVNI: Record<string, string> = {
 const PORADI_UROVNI = ["outsider", "kandidat", "radni", "starosta", "kongresman", "guverner", "prezident"] as const;
 const KLICE_BRANCE = ["kandidat", "radni", "starosta", "kongresman", "guverner", "prezident"] as const;
 
-const NAZVY_DOVEDNOSTI: Record<string, string> = {
-  diplomacie: "diplomacie",
-  retorika: "rétorika",
-  finance: "finance",
-  vyjednavani: "vyjednávání",
-  medialnost: "mediálnost",
-};
-
-/* Barevné pravidlo inspirace: zelená vždy znamená „dobře pro vás",
-   červená „zle", nezávisle na směru čísla. */
 type Barva = "zelena" | "zluta" | "cervena";
 
 function tridaBarvy(b: Barva): string {
@@ -73,7 +66,7 @@ function skala(hodnota: number, zluta: number, zelena: number, smerNahoru: boole
 }
 
 /* ============================================================
- * Mapa USA — dlaždicové rozložení přibližující geografii (11 řádků × 12 sloupců)
+ * Mapa USA (volební noc)
  * ============================================================ */
 
 const MAPA_RADKY: string[][] = [
@@ -89,7 +82,7 @@ const MAPA_RADKY: string[][] = [
 const EV_TABULKA: Record<string, number> = Object.fromEntries(STATY_EV.map((s) => [s.stat, s.ev]));
 
 /* ============================================================
- * Parametry akcí — jednoduchá deklarativní specifikace formulářů
+ * Specifikace formulářů ručních akcí (sekundární ovládání)
  * ============================================================ */
 
 interface PolozkaFormulare {
@@ -138,6 +131,8 @@ const PARAM_SPEC: Record<string, PolozkaFormulare[]> = {
         { hodnota: "primarky", label: "Primárky" },
       ],
     },
+    { klic: "slibUrednihoAktu", label: "Slib úředního aktu (quid pro quo)", typ: "text" },
+    { klic: "pocetSvedku", label: "Počet svědků", typ: "number", vychozi: 0, min: 0, max: 10 },
   ],
   reklama: [{ klic: "castkaUSD", label: "Částka na reklamu (USD)", typ: "number", vychozi: 5000, min: 1 }],
   uplacek: [
@@ -233,7 +228,7 @@ const PARAM_SPEC: Record<string, PolozkaFormulare[]> = {
       klic: "npcId",
       label: "Osoba",
       typ: "select",
-      volby: START_NPC.map((n) => ({ hodnota: n.id, label: `${n.jmeno} (${n.role}, prestiž ${n.prestiz})` })),
+      volby: [],
     },
     { klic: "slibText", label: "Volitelný slib (zavazuje)", typ: "text" },
   ],
@@ -252,12 +247,13 @@ const PARAM_SPEC: Record<string, PolozkaFormulare[]> = {
  * ============================================================ */
 
 function Monogram({ jmeno, uroven }: { jmeno: string; uroven: string }) {
-  const iniciály = jmeno
-    .split(" ")
-    .filter(Boolean)
-    .map((c) => c[0]?.toUpperCase())
-    .join("")
-    .slice(0, 2) || "US";
+  const iniciály =
+    jmeno
+      .split(" ")
+      .filter(Boolean)
+      .map((c) => c[0]?.toUpperCase())
+      .join("")
+      .slice(0, 2) || "US";
   const barvaUrovne: Record<string, string> = {
     outsider: "bg-slate-600",
     kandidat: "bg-teal-700",
@@ -268,7 +264,7 @@ function Monogram({ jmeno, uroven }: { jmeno: string; uroven: string }) {
     prezident: "bg-amber-600",
   };
   return (
-    <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-lg font-bold text-white ${barvaUrovne[uroven] ?? "bg-slate-600"}`}>
+    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${barvaUrovne[uroven] ?? "bg-slate-600"}`}>
       {iniciály}
     </div>
   );
@@ -278,7 +274,7 @@ function ApDots({ ap, max }: { ap: number; max: number }) {
   return (
     <div className="flex items-center gap-1" title={`Akční body: ${ap}/${max}`}>
       {Array.from({ length: max }, (_, i) => (
-        <span key={i} className={`h-2.5 w-2.5 rounded-full ${i < ap ? "bg-emerald-400" : "bg-slate-600"}`} />
+        <span key={i} className={`h-2 w-2 rounded-full ${i < ap ? "bg-emerald-400" : "bg-slate-600"}`} />
       ))}
     </div>
   );
@@ -291,7 +287,7 @@ function Pruh({ label, hodnota, barva, zprava }: { label: string; hodnota: numbe
         <span className="text-slate-300">{label}</span>
         <span className={`font-semibold ${textBarvy(barva)}`}>{zprava ?? FORMAT_CISLO.format(hodnota)}</span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-700">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
         <div className={`h-full rounded-full ${tridaBarvy(barva)}`} style={{ width: `${Math.max(2, Math.min(100, hodnota))}%` }} />
       </div>
     </div>
@@ -300,6 +296,15 @@ function Pruh({ label, hodnota, barva, zprava }: { label: string; hodnota: numbe
 
 function Karta({ deti, className }: { deti: React.ReactNode; className?: string }) {
   return <div className={`rounded-xl border border-slate-700 bg-slate-800/70 p-4 ${className ?? ""}`}>{deti}</div>;
+}
+
+function Udaj({ label, hodnota, barva }: { label: string; hodnota: string; barva: Barva }) {
+  return (
+    <div className="rounded-lg bg-slate-900/60 px-2.5 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`text-sm font-bold ${textBarvy(barva)}`}>{hodnota}</div>
+    </div>
+  );
 }
 
 /* ============================================================
@@ -317,7 +322,7 @@ function Prolog({ onStart }: { onStart: (p: { jmeno: string; vek: number; archet
     <div className="mx-auto max-w-5xl px-4 py-8">
       <header className="mb-8 text-center">
         <h1 className="text-4xl font-black tracking-tight text-white">Politický simulátor USA</h1>
-        <p className="mt-2 text-slate-400">Od zakladatele firmy k Bílému domu. Každé kolo je jeden týden.</p>
+        <p className="mt-2 text-slate-400">Od zakladatele firmy k Bílému domu. Řekněte štábu, co chcete — AI to přeloží do herních akcí.</p>
       </header>
 
       <Karta className="mb-6">
@@ -391,11 +396,6 @@ function Prolog({ onStart }: { onStart: (p: { jmeno: string; vek: number; archet
                 <span className="rounded bg-slate-700 px-1.5 py-0.5 text-slate-200">{usd(a.majetekUSD)}</span>
                 <span className="rounded bg-slate-700 px-1.5 py-0.5 text-slate-200">kapitál {a.socialniKapital}</span>
                 <span className="rounded bg-slate-700 px-1.5 py-0.5 text-slate-200">etika {a.etika}</span>
-                {Object.entries(a.dovednosti).map(([d, h]) => (
-                  <span key={d} className="rounded bg-sky-900/60 px-1.5 py-0.5 text-sky-200">
-                    {NAZVY_DOVEDNOSTI[d] ?? d} {h}
-                  </span>
-                ))}
               </div>
             </button>
           );
@@ -491,34 +491,59 @@ function VolebniNoc({ data, zavreni }: { data: VolebniData; zavreni: () => void 
 }
 
 /* ============================================================
+ * Chat se štábem (hlavní ovládání)
+ * ============================================================ */
+
+interface ProvedenaAkceVChatu {
+  nazev: string;
+  ok: boolean;
+  zprava: string;
+}
+
+interface ChatZprava {
+  role: "hrac" | "ai" | "system";
+  text: string;
+  akce?: ProvedenaAkceVChatu[];
+  varovani?: string[];
+  poznamka?: string | null;
+}
+
+interface AiNastaveni {
+  klic: string;
+  model: string;
+}
+
+const KLIC_STORAGE_HRA = "politicky-sim-save";
+const KLIC_STORAGE_AI = "politicky-sim-ai";
+const MODELY = ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"];
+
+/* ============================================================
  * Hlavní aplikace
  * ============================================================ */
 
-type Zalozka = "akce" | "inbox" | "kodex" | "sliby";
-
-interface PosledniZprava {
-  ok: boolean;
-  text: string;
-  varovani: string[];
-}
-
 export default function App() {
   const [hra, setHra] = useState<GameState | null>(null);
-  const [zalozka, setZalozka] = useState<Zalozka>("akce");
-  const [posledniZprava, setPosledniZprava] = useState<PosledniZprava | null>(null);
+  const [chat, setChat] = useState<ChatZprava[]>([]);
+  const [vstup, setVstup] = useState("");
+  const [ceka, setCeka] = useState(false);
+  const [ai, setAi] = useState<AiNastaveni>({ klic: "", model: "mistral-small-latest" });
+  const [nastaveniOtevreno, setNastaveniOtevreno] = useState(false);
   const [modalAkce, setModalAkce] = useState<string | null>(null);
   const [formular, setFormular] = useState<Record<string, string>>({});
   const [volebniData, setVolebniData] = useState<VolebniData | null>(null);
   const [hledani, setHledani] = useState("");
+  const konecChatu = useRef<HTMLDivElement | null>(null);
 
-  /* Načtení uložené hry */
+  /* Načtení uložené hry a nastavení AI */
   useEffect(() => {
     try {
-      const ulozene = window.localStorage.getItem("politicky-sim-save");
+      const ulozene = window.localStorage.getItem(KLIC_STORAGE_HRA);
       if (ulozene) {
         const s = JSON.parse(ulozene) as GameState;
         if (s && s.saveVersion === 1) setHra(s);
       }
+      const n = window.localStorage.getItem(KLIC_STORAGE_AI);
+      if (n) setAi(JSON.parse(n) as AiNastaveni);
     } catch {
       /* localStorage nedostupný — hra poběží bez uložení */
     }
@@ -528,11 +553,24 @@ export default function App() {
   useEffect(() => {
     if (!hra) return;
     try {
-      window.localStorage.setItem("politicky-sim-save", JSON.stringify(hra));
+      window.localStorage.setItem(KLIC_STORAGE_HRA, JSON.stringify(hra));
     } catch {
       /* ignorujeme */
     }
   }, [hra]);
+
+  useEffect(() => {
+    konecChatu.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chat, ceka]);
+
+  function ulozAi(n: AiNastaveni) {
+    setAi(n);
+    try {
+      window.localStorage.setItem(KLIC_STORAGE_AI, JSON.stringify(n));
+    } catch {
+      /* ignorujeme */
+    }
+  }
 
   function start(p: { jmeno: string; vek: number; archetyp: string; stat: string; seed: number }) {
     const s = vytvorNovouHru({
@@ -542,23 +580,132 @@ export default function App() {
       archetyp: p.archetyp,
       rodneMistoUS: true,
       naturalizovany: false,
-      zivotopisText: "Prolog — Milník 2.",
+      zivotopisText: "Prolog.",
       domovskyStat: p.stat,
     });
     setHra(s);
-    setPosledniZprava(null);
+    setChat([
+      {
+        role: "system",
+        text: "Vítejte. Jste štáb na jediné slovo: napište, čeho chcete tento týden dosáhnout — AI náčelník štábu převede váš záměr do konkrétních akcí enginu. Příklady: „Zvedni mi známost ve městě a něco vydělej“, „Založ volební výbor a zajisti první dary“, „Chci kandidovat na radního“.",
+      },
+    ]);
+  }
+
+  function novaHra() {
+    try {
+      window.localStorage.removeItem(KLIC_STORAGE_HRA);
+    } catch {
+      /* ignorujeme */
+    }
+    setHra(null);
+    setChat([]);
   }
 
   function cloneStav(s: GameState): GameState {
     return JSON.parse(JSON.stringify(s)) as GameState;
   }
 
+  /* --- AI chat: odeslání zprávy --- */
+  async function odesli() {
+    const text = vstup.trim();
+    if (!text || ceka || !hra) return;
+    setVstup("");
+
+    if (!ai.klic) {
+      setChat((c) => [
+        ...c,
+        { role: "hrac", text },
+        {
+          role: "system",
+          text: "Pro odpověď štábu je potřeba API klíč Mistral. Otevřete „Nastavení AI“ vpravo nahoře, vložte klíč z console.mistral.ai a odešlete zprávu znovu. Ruční akce fungují i bez klíče.",
+        },
+      ]);
+      setNastaveniOtevreno(true);
+      return;
+    }
+
+    setChat((c) => [...c, { role: "hrac", text }]);
+    setCeka(true);
+
+    const ns = cloneStav(hra);
+    const historie = chat
+      .filter((m) => m.role === "hrac" || m.role === "ai")
+      .slice(-8)
+      .map((m) => ({ role: m.role === "hrac" ? ("user" as const) : ("assistant" as const), content: m.text }));
+
+    const zpravy = [
+      { role: "system", content: systemovyPrompt(ns) + "\n" + stavProAi(ns) },
+      ...historie,
+      { role: "user", content: text },
+    ];
+
+    try {
+      const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.klic}` },
+        body: JSON.stringify({ model: ai.model, messages: zpravy, temperature: 0.6, max_tokens: 900 }),
+      });
+      if (!res.ok) {
+        const detail = res.status === 401 ? "Neplatný API klíč." : res.status === 429 ? "Překročen limit požadavků." : `HTTP ${res.status}.`;
+        throw new Error(detail);
+      }
+      const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      const obsah = data.choices?.[0]?.message?.content ?? "";
+
+      const parse = parsujPlan(obsah, ns);
+      if (!parse.ok || !parse.plan) {
+        setChat((c) => [...c, { role: "system", text: `Odpověď AI nešla převést do herního plánu: ${parse.chyby.join(" ")} Zkuste záměr napsat konkrétněji.` }]);
+        setCeka(false);
+        return;
+      }
+
+      const vysledek = provedPlan(ns, parse.plan);
+      setHra(ns);
+
+      const akceVChatu: ProvedenaAkceVChatu[] = vysledek.provedeno.map((p) => ({
+        nazev: p.akce,
+        ok: p.ok,
+        zprava: p.zprava,
+      }));
+      const varovani = vysledek.provedeno.flatMap((p) => p.varovani);
+      const poznamka = [
+        parse.vyrazeno.length > 0 ? `Vyřazeno (nedostupné akce nebo nedostatek AP): ${parse.vyrazeno.join(", ")}` : null,
+        vysledek.udalostZprava,
+        parse.chyby.length > 0 ? `Upozornění validátoru: ${parse.chyby.join(" ")}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      setChat((c) => [
+        ...c,
+        {
+          role: "ai",
+          text: parse.plan.reci || "Plán byl proveden.",
+          akce: akceVChatu,
+          varovani: varovani.length > 0 ? varovani : undefined,
+          poznamka: poznamka || null,
+        },
+      ]);
+    } catch (e) {
+      setChat((c) => [
+        ...c,
+        { role: "system", text: `Štáb se neozval: ${(e as Error).message} Zkontrolujte API klíč v nastavení AI; ruční akce fungují nezávisle.` },
+      ]);
+    }
+    setCeka(false);
+  }
+
+  /* --- Ruční akce --- */
   function provedAkci(id: string, parametry: Record<string, unknown> = {}) {
     if (!hra) return;
     const ns = cloneStav(hra);
     const vysledek = applyPlayerAction(ns, id, parametry);
     setHra(ns);
-    setPosledniZprava({ ok: vysledek.ok, text: vysledek.zprava, varovani: vysledek.varovani });
+    setChat((c) => [
+      ...c,
+      { role: "system", text: `${vysledek.ok ? "Provedeno" : "Odmítnuto"} (ruční akce ${id}): ${vysledek.zprava}${vysledek.varovani.length > 0 ? " — " + vysledek.varovani.join(" ") : ""}` },
+    ]);
     setModalAkce(null);
   }
 
@@ -573,11 +720,10 @@ export default function App() {
       vychozi[pol.klic] = String(pol.vychozi ?? pol.volby?.[0]?.hodnota ?? "");
     }
     if (id === "splnit_slib" && hra) {
-      const volby = hra.sliby.filter((x) => x.stav === "v_progressu").map((x) => ({ hodnota: x.id, label: `${x.text} (lhůta kolo ${x.lhutaKolo})` }));
-      PARAM_SPEC.splnit_slib[0].volby = volby;
+      PARAM_SPEC.splnit_slib[0].volby = hra.sliby.filter((x) => x.stav === "v_progressu").map((x) => ({ hodnota: x.id, label: `${x.text} (lhůta kolo ${x.lhutaKolo})` }));
     }
     if (id === "konverzace" && hra) {
-      PARAM_SPEC.konverzace[0].volby = hra.npc.map((n) => ({ hodnota: n.id, label: `${n.jmeno} (${n.role}, prestiž ${n.prestiz}, vztah ${n.vztah})` }));
+      PARAM_SPEC.konverzace[0].volby = hra.npc.map((n) => ({ hodnota: n.id, label: `${n.jmeno} (${n.role}, vztah ${n.vztah})` }));
     }
     setFormular(vychozi);
     setModalAkce(id);
@@ -588,6 +734,7 @@ export default function App() {
     const parametry: Record<string, unknown> = {};
     for (const pol of spec) {
       const hodnota = formular[pol.klic] ?? "";
+      if (hodnota === "") continue;
       if (pol.typ === "number") {
         const n = Number(hodnota);
         if (Number.isFinite(n)) parametry[pol.klic] = n;
@@ -603,6 +750,10 @@ export default function App() {
     const ns = cloneStav(hra);
     const souhrn = endTurn(ns);
     setHra(ns);
+    setChat((c) => [
+      ...c,
+      { role: "system", text: `Týden ${souhrn.tyden} roku ${souhrn.rok} skončil. ${souhrn.zpravy.join(" ") || "Klidný týden."}` },
+    ]);
     if (souhrn.volbyProbehly) {
       const volbyDenik = [...ns.denik].reverse().find((e) => e.typ === "volby");
       const d = volbyDenik?.data as Partial<VolebniData> | undefined;
@@ -616,8 +767,6 @@ export default function App() {
         });
       }
     }
-    setPosledniZprava(null);
-    setZalozka("inbox");
   }
 
   const akce = useMemo(() => (hra ? dostupneAkce(hra.funkce.uroven) : []), [hra]);
@@ -637,65 +786,257 @@ export default function App() {
   const cilBrance = BRANCE[KLICE_BRANCE[Math.min(indexUrovne + 1, KLICE_BRANCE.length - 1)]];
 
   return (
-    <div className="min-h-screen bg-slate-900 pb-24">
-      {/* Hlavička — tři kotvy ReLife: kdo jste, kolik peněz, kolik času */}
-      <header className="sticky top-0 z-40 border-b border-slate-700 bg-slate-900/95 px-4 py-3 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2">
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-slate-900 pb-10">
+      {/* Kompaktní hlavička */}
+      <header className="sticky top-0 z-40 border-b border-slate-700 bg-slate-900/95 px-4 py-2.5 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex items-center gap-2.5">
             <Monogram jmeno={hra.postava.jmeno} uroven={hra.funkce.uroven} />
             <div>
-              <div className="font-bold leading-tight text-white">{hra.postava.jmeno}</div>
-              <div className="text-xs text-slate-400">
-                {NAZVY_UROVNI[hra.funkce.uroven]} · {hra.postava.domovskyStat} · věk {hra.postava.vek}
+              <div className="text-sm font-bold leading-tight text-white">{hra.postava.jmeno}</div>
+              <div className="text-[11px] text-slate-400">
+                {NAZVY_UROVNI[hra.funkce.uroven]} · kolo {hra.kolo} · týden {hra.tyden}/{hra.rok}
               </div>
             </div>
           </div>
-          <div className="text-sm text-slate-300">
-            <span className="font-bold text-white">Kolo {hra.kolo}</span> · týden {hra.tyden} / {hra.rok}
-          </div>
-          <div className="text-sm text-slate-300">
-            Pokladna <span className="font-bold text-emerald-400">{usd(hra.finance.pokladnaKampane)}</span>
-            {hra.finance.vyborZalozen ? "" : <span className="ml-1 rounded bg-amber-500/20 px-1 text-[11px] text-amber-300">bez výboru</span>}
-          </div>
-          <div className="text-sm text-slate-300">
+          <div className="text-xs text-slate-300">
+            Kampaň <span className="font-bold text-emerald-400">{usd(hra.finance.pokladnaKampane)}</span>
+            <span className="mx-1 text-slate-600">|</span>
             Majetek <span className="font-bold text-white">{usd(a.majetekUSD)}</span>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs uppercase tracking-wide text-slate-400">AP</span>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">AP</span>
             <ApDots ap={hra.ap} max={10} />
+            <button
+              onClick={ukonciKolo}
+              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 transition-colors hover:bg-amber-400"
+            >
+              Ukončit kolo
+            </button>
+            <button onClick={() => setNastaveniOtevreno((o) => !o)} className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700" title="Nastavení AI">
+              AI
+            </button>
+            <button onClick={novaHra} className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-700" title="Začít novou hru (smaže uložení)">
+              Nová hra
+            </button>
           </div>
         </div>
+        {nastaveniOtevreno && (
+          <div className="mx-auto mt-2 max-w-6xl rounded-xl border border-slate-700 bg-slate-800/80 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="text-sm text-slate-300">
+                API klíč Mistral (console.mistral.ai)
+                <input
+                  type="password"
+                  className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-white focus:border-emerald-400 focus:outline-none"
+                  placeholder="vložte klíč"
+                  value={ai.klic}
+                  onChange={(e) => ulozAi({ ...ai, klic: e.target.value })}
+                />
+              </label>
+              <label className="text-sm text-slate-300">
+                Model
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-white focus:border-emerald-400 focus:outline-none"
+                  value={ai.model}
+                  onChange={(e) => ulozAi({ ...ai, model: e.target.value })}
+                >
+                  {MODELY.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="text-xs text-slate-400 sm:col-span-1 self-end">
+                Klíč se ukládá pouze do vašeho prohlížeče (localStorage). AI navrhuje plán; engine jej validuje a vykonává.
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
-      {/* Novinový pás — zpětná vazba dle inspirace */}
-      {posledniZprava && (
-        <div className={`mx-auto mt-4 max-w-6xl px-4`}>
-          <div className={`rounded-xl border p-4 ${posledniZprava.ok ? "border-emerald-600/50 bg-emerald-500/10" : "border-rose-600/50 bg-rose-500/10"}`}>
-            <div className="flex items-start gap-3">
-              <span className="rounded bg-slate-800 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-amber-300">Lakeside Chronicle</span>
-              <p className={`text-sm ${posledniZprava.ok ? "text-emerald-100" : "text-rose-100"}`}>{posledniZprava.text}</p>
-            </div>
-            {posledniZprava.varovani.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {posledniZprava.varovani.map((w, i) => (
-                  <li key={i} className="text-xs text-amber-300">
-                    ⚠ {w}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
-
       <main className="mx-auto mt-4 grid max-w-6xl grid-cols-1 gap-4 px-4 lg:grid-cols-3">
-        {/* Levý sloupec: kariéra a brance */}
+        {/* Hlavní panel: chat se štábem */}
+        <section className="lg:col-span-2">
+          <Karta className="flex h-[32rem] flex-col p-0">
+            <div className="flex-1 space-y-3 overflow-y-auto p-4">
+              {chat.map((m, i) => (
+                <div key={i} className={m.role === "hrac" ? "flex justify-end" : "flex justify-start"}>
+                  <div
+                    className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm ${
+                      m.role === "hrac"
+                        ? "bg-emerald-600 text-white"
+                        : m.role === "ai"
+                          ? "bg-slate-700 text-slate-100"
+                          : "bg-slate-800 border border-slate-600 text-amber-200"
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap">{m.text}</p>
+                    {m.akce && m.akce.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {m.akce.map((p, j) => (
+                          <li key={j} className={`rounded-lg px-2 py-1 text-xs ${p.ok ? "bg-emerald-900/50 text-emerald-200" : "bg-rose-900/50 text-rose-200"}`}>
+                            {p.ok ? "✓" : "✕"} {p.nazev}: {p.zprava}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {m.varovani && m.varovani.length > 0 && (
+                      <ul className="mt-1 space-y-0.5">
+                        {m.varovani.map((w, j) => (
+                          <li key={j} className="text-[11px] text-amber-300">
+                            ⚠ {w}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {m.poznamka && <p className="mt-1 text-[11px] text-slate-400">{m.poznamka}</p>}
+                  </div>
+                </div>
+              ))}
+              {ceka && (
+                <div className="flex justify-start">
+                  <div className="rounded-xl bg-slate-700 px-3.5 py-2.5 text-sm text-slate-300">Štáb zvažuje možnosti…</div>
+                </div>
+              )}
+              <div ref={konecChatu} />
+            </div>
+            <div className="border-t border-slate-700 p-3">
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-sm text-white focus:border-emerald-400 focus:outline-none"
+                  placeholder="Čeho chcete tento týden dosáhnout? (např. „zajisti mi sponzory a zvedni známost“)"
+                  value={vstup}
+                  onChange={(e) => setVstup(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      odesli();
+                    }
+                  }}
+                />
+                <button
+                  onClick={odesli}
+                  disabled={ceka || vstup.trim().length === 0}
+                  className="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 transition-colors hover:bg-emerald-400 disabled:opacity-40"
+                >
+                  {ceka ? "…" : "Odeslat"}
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                AI převede váš záměr do akcí enginu (rozpočet {hra.ap} AP); vše zůstává deterministické a replaovatelné.
+              </p>
+            </div>
+          </Karta>
+
+          {/* Ruční akce — sekundární ovládání */}
+          <details className="mt-4 rounded-xl border border-slate-700 bg-slate-800/70 p-4">
+            <summary className="cursor-pointer text-sm font-bold text-white">Ruční akce (bez AI)</summary>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {akce.map((def) => {
+                const zaostava = hra.ap < def.ap;
+                return (
+                  <button
+                    key={def.id}
+                    disabled={zaostava}
+                    onClick={() => otevriAkci(def.id)}
+                    className={`rounded-lg border p-3 text-left transition-colors ${
+                      zaostava ? "border-slate-800 bg-slate-900/50 opacity-50" : "border-slate-700 bg-slate-900/60 hover:border-emerald-500"
+                    }`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-sm font-bold text-white">{def.nazev}</span>
+                      <span className="shrink-0 rounded-full bg-sky-900/70 px-2 py-0.5 text-[11px] font-bold text-sky-200">{def.ap} AP</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-400">{def.popis}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </details>
+
+          {/* Archiv: kodex, sliby, lidé, deník */}
+          <details className="mt-4 rounded-xl border border-slate-700 bg-slate-800/70 p-4">
+            <summary className="cursor-pointer text-sm font-bold text-white">Archiv — kodex, sliby, lidé, deník</summary>
+            <div className="mt-4 space-y-4">
+              <div>
+                <h3 className="mb-2 text-sm font-bold text-white">Kodex zákonů</h3>
+                <input
+                  className="mb-2 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white focus:border-emerald-400 focus:outline-none"
+                  placeholder="Fulltextové hledání (např. „30116“, „buckley“, „dodatek“)…"
+                  value={hledani}
+                  onChange={(e) => setHledani(e.target.value)}
+                />
+                <div className="max-h-64 space-y-2 overflow-y-auto">
+                  {zakony.map((z) => (
+                    <details key={z.id} className="rounded-lg bg-slate-900/60 px-3 py-2">
+                      <summary className="cursor-pointer text-xs font-semibold text-white">
+                        {z.citace} — {z.nazev}
+                      </summary>
+                      <p className="mt-2 text-[11px] text-slate-300">{z.shrnuti}</p>
+                      <p className="mt-1 text-[11px] text-amber-200">Ve hře: {z.efektyVeHre.join("; ")}</p>
+                    </details>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <h3 className="mb-2 text-sm font-bold text-white">Smlouvy s voliči — sliby</h3>
+                  {hra.sliby.length === 0 && <p className="text-[11px] text-slate-400">Žádné sliby. Sliby zavazují na 52 kol.</p>}
+                  {hra.sliby.map((s) => (
+                    <div key={s.id} className="mb-1.5 rounded-lg bg-slate-900/60 px-3 py-1.5 text-[11px] text-slate-300">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span>{s.text}</span>
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                            s.stav === "splnen" ? "bg-emerald-900/60 text-emerald-200" : s.stav === "porusen" ? "bg-rose-900/60 text-rose-200" : "bg-amber-900/60 text-amber-200"
+                          }`}
+                        >
+                          {s.stav === "splnen" ? "splněn" : s.stav === "porusen" ? "porušen" : `lhůta ${s.lhutaKolo}`}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <h3 className="mb-2 text-sm font-bold text-white">Lidé kolem vás</h3>
+                  {hra.npc.map((n) => (
+                    <div key={n.id} className="mb-1.5 rounded-lg bg-slate-900/60 px-3 py-1.5">
+                      <div className="flex items-baseline justify-between text-[11px]">
+                        <span className="font-semibold text-white">{n.jmeno}</span>
+                        <span className="text-slate-400">{n.role} · vztah {n.vztah}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="mb-2 text-sm font-bold text-white">Deník</h3>
+                <div className="max-h-48 space-y-1 overflow-y-auto">
+                  {[...hra.denik].reverse().slice(0, 25).map((e, i) => (
+                    <div key={i} className="rounded-lg bg-slate-900/60 px-3 py-1.5 text-[11px] text-slate-300">
+                      <span className={`mr-2 rounded px-1 py-0.5 text-[9px] font-bold uppercase ${e.typ === "pravni" ? "bg-rose-900/60 text-rose-200" : e.typ === "volby" ? "bg-sky-900/60 text-sky-200" : e.typ === "udalost" ? "bg-amber-900/60 text-amber-200" : "bg-slate-700 text-slate-200"}`}>
+                        {e.typ}
+                      </span>
+                      {(() => {
+                        const d = e.data as { zprava?: string; akce?: string; popis?: string; nazev?: string };
+                        return String(d.zprava ?? d.popis ?? `${d.nazev ? d.nazev + ": " : ""}${d.akce ?? ""}`).slice(0, 200);
+                      })()}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        {/* Postranní panel: brance a ukazatele */}
         <section className="space-y-4">
           <Karta>
-            <h3 className="mb-3 font-bold text-white">Kariérní brance</h3>
-            <p className="mb-3 text-xs text-slate-400">
-              Cíl: <span className="font-semibold text-amber-300">{NAZVY_UROVNI[cilBrance.cilovaUroven]}</span> — dračí doupě, bez prahů nelze kandidovat.
-            </p>
+            <h3 className="mb-2 text-sm font-bold text-white">Kariérní brance — cíl: {NAZVY_UROVNI[cilBrance.cilovaUroven]}</h3>
             <Pruh
               label="Pokladna kampaně"
               hodnota={(hra.finance.pokladnaKampane / cilBrance.pokladnaKampan) * 100}
@@ -705,21 +1046,38 @@ export default function App() {
             <Pruh label={`Známost ve státě (≥ ${cilBrance.znamostStat} %)`} hodnota={a.znamostStat} barva={skala(a.znamostStat, cilBrance.znamostStat * 0.5, cilBrance.znamostStat, true)} />
             <Pruh label={`Sociální kapitál (≥ ${cilBrance.socialniKapital})`} hodnota={a.socialniKapital} barva={skala(a.socialniKapital, cilBrance.socialniKapital * 0.5, cilBrance.socialniKapital, true)} />
             <Pruh label={`Etika (≥ ${cilBrance.etika})`} hodnota={a.etika * 10} barva={skala(a.etika * 10, cilBrance.etika * 5, cilBrance.etika * 10, true)} zprava={`${a.etika} / 10`} />
-            {brance?.splneno && <p className="mt-2 rounded bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300">Brance splněna — můžete vyhlásit kandidaturu.</p>}
-            {!brance?.splneno && brance && (
-              <ul className="mt-2 space-y-1">
-                {brance.chybejici.map((c, i) => (
-                  <li key={i} className="text-[11px] text-amber-300">
-                    Chybí: {c}
-                  </li>
-                ))}
-              </ul>
+            {brance?.splneno ? (
+              <p className="mt-1 rounded bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-300">Brance splněna — můžete vyhlásit kandidaturu.</p>
+            ) : (
+              brance && (
+                <ul className="mt-1 space-y-0.5">
+                  {brance.chybejici.map((c, i) => (
+                    <li key={i} className="text-[10px] text-amber-300">
+                      Chybí: {c}
+                    </li>
+                  ))}
+                </ul>
+              )
             )}
           </Karta>
 
           <Karta>
-            <h3 className="mb-3 font-bold text-white">Makro USA</h3>
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <h3 className="mb-2 text-sm font-bold text-white">Osobní ukazatele</h3>
+            <Pruh label="Známost lokální / ve státě / národní" hodnota={Math.max(a.znamostLokal, a.znamostStat, a.znamostNarod)} barva={skala(Math.max(a.znamostLokal, a.znamostStat), 20, 45, true)} zprava={`${Math.round(a.znamostLokal)} / ${Math.round(a.znamostStat)} / ${Math.round(a.znamostNarod)}`} />
+            <Pruh label="Integrita" hodnota={a.integrita} barva={skala(a.integrita, 40, 65, true)} />
+            <Pruh label="Prodejnost (vnímání ovlivnitelnosti)" hodnota={a.prodejnost * 10} barva={skala(a.prodejnost * 10, 60, 30, false)} zprava={`${a.prodejnost} / 10`} />
+            <Pruh label="Kriminální riziko" hodnota={hra.pravni.kriminalniRiziko} barva={skala(hra.pravni.kriminalniRiziko, 40, 20, false)} />
+            <Pruh label="Riziko FEC auditu" hodnota={hra.pravni.fecAuditRiziko} barva={skala(hra.pravni.fecAuditRiziko, 40, 20, false)} />
+            {hra.pravni.vysetrovani.length > 0 && (
+              <p className="mt-1 rounded bg-rose-900/40 px-2 py-1 text-[11px] text-rose-200">
+                Vyšetřování: {hra.pravni.vysetrovani[0].tema} (intenzita {Math.round(hra.pravni.vysetrovani[0].intenzita * 100)} %)
+              </p>
+            )}
+          </Karta>
+
+          <Karta>
+            <h3 className="mb-2 text-sm font-bold text-white">Makro USA a město</h3>
+            <div className="grid grid-cols-2 gap-1.5 text-sm">
               <Udaj label="HDP růst" hodnota={`${hra.macro.hdpRust} %`} barva={skala(hra.macro.hdpRust, 1, 2, true)} />
               <Udaj label="Inflace" hodnota={`${hra.macro.inflace} %`} barva={skala(hra.macro.inflace, 5, 3, false)} />
               <Udaj label="Nezaměstnanost" hodnota={`${hra.macro.nezamestnanost} %`} barva={skala(hra.macro.nezamestnanost, 5.5, 4.8, false)} />
@@ -731,165 +1089,9 @@ export default function App() {
             </div>
           </Karta>
         </section>
-
-        {/* Střed: záložky */}
-        <section className="lg:col-span-2">
-          <div className="mb-3 flex gap-2">
-            {(["akce", "inbox", "kodex", "sliby"] as Zalozka[]).map((z) => (
-              <button
-                key={z}
-                onClick={() => setZalozka(z)}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                  zalozka === z ? "bg-emerald-500 text-slate-950" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                }`}
-              >
-                {z === "akce" ? "Akce" : z === "inbox" ? "Inbox kola" : z === "kodex" ? "Kodex zákonů" : "Sliby a lidé"}
-              </button>
-            ))}
-          </div>
-
-          {zalozka === "akce" && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {akce.map((def) => {
-                const zaostava = hra.ap < def.ap;
-                return (
-                  <button
-                    key={def.id}
-                    disabled={zaostava}
-                    onClick={() => otevriAkci(def.id)}
-                    className={`rounded-xl border p-4 text-left transition-colors ${
-                      zaostava
-                        ? "border-slate-800 bg-slate-900/50 opacity-50"
-                        : "border-slate-700 bg-slate-800/70 hover:border-emerald-500"
-                    }`}
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="font-bold text-white">{def.nazev}</span>
-                      <span className="shrink-0 rounded-full bg-sky-900/70 px-2 py-0.5 text-xs font-bold text-sky-200">{def.ap} AP</span>
-                    </div>
-                    <p className="mt-1 text-xs text-slate-400">{def.popis}</p>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {zalozka === "inbox" && (
-            <div>
-              <Karta className="mb-3">
-                <h3 className="mb-2 font-bold text-white">Deník — poslední události</h3>
-                <div className="max-h-96 space-y-2 overflow-y-auto">
-                  {[...hra.denik].reverse().slice(0, 30).map((e, i) => (
-                    <div key={i} className="rounded-lg bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
-                      <span className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${e.typ === "pravni" ? "bg-rose-900/60 text-rose-200" : e.typ === "volby" ? "bg-sky-900/60 text-sky-200" : e.typ === "udalost" ? "bg-amber-900/60 text-amber-200" : "bg-slate-700 text-slate-200"}`}>
-                        {e.typ}
-                      </span>
-                      {(() => {
-                        const d = e.data as { zprava?: string; akce?: string; popis?: string; nazev?: string };
-                        return String(d.zprava ?? d.popis ?? `${d.nazev ? d.nazev + ": " : ""}${d.akce ?? ""}` ?? JSON.stringify(e.data)).slice(0, 220);
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              </Karta>
-              <button
-                onClick={ukonciKolo}
-                className="w-full rounded-xl bg-amber-500 py-4 text-lg font-bold text-slate-950 transition-colors hover:bg-amber-400"
-              >
-                Ukončit kolo a postoupit o týden
-              </button>
-            </div>
-          )}
-
-          {zalozka === "kodex" && (
-            <Karta>
-              <h3 className="mb-3 font-bold text-white">Kodex zákonů</h3>
-              <input
-                className="mb-4 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white focus:border-emerald-400 focus:outline-none"
-                placeholder="Fulltextové hledání (např. „30116“, „buckley“, „dodatek“)…"
-                value={hledani}
-                onChange={(e) => setHledani(e.target.value)}
-              />
-              <div className="max-h-[28rem] space-y-2 overflow-y-auto">
-                {zakony.map((z) => (
-                  <details key={z.id} className="rounded-lg bg-slate-900/60 px-3 py-2">
-                    <summary className="cursor-pointer text-sm font-semibold text-white">
-                      {z.citace} — {z.nazev}
-                    </summary>
-                    <p className="mt-2 text-xs text-slate-300">{z.shrnuti}</p>
-                    <p className="mt-1 text-xs text-amber-200">Ve hře: {z.efektyVeHre}</p>
-                    <p className="mt-1 text-[11px] text-slate-500">Zdroje: {z.zdroje}</p>
-                  </details>
-                ))}
-              </div>
-            </Karta>
-          )}
-
-          {zalozka === "sliby" && (
-            <div className="space-y-3">
-              <Karta>
-                <h3 className="mb-3 font-bold text-white">Smlouvy s voliči — sliby</h3>
-                {hra.sliby.length === 0 && <p className="text-xs text-slate-400">Žádné sliby. Každý slib je závazek s lhůtou jednoho herního roku.</p>}
-                {hra.sliby.map((s) => (
-                  <div key={s.id} className="mb-2 rounded-lg bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-slate-200">{s.text}</span>
-                      <span
-                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
-                          s.stav === "splnen" ? "bg-emerald-900/60 text-emerald-200" : s.stav === "porusen" ? "bg-rose-900/60 text-rose-200" : "bg-amber-900/60 text-amber-200"
-                        }`}
-                      >
-                        {s.stav === "splnen" ? "splněn" : s.stav === "porusen" ? "porušen" : `lhůta kolo ${s.lhutaKolo}`}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </Karta>
-              <Karta>
-                <h3 className="mb-3 font-bold text-white">Lidé kolem vás</h3>
-                {hra.npc.map((n) => {
-                  const barvaVztahu = n.vztah >= 2 ? "zelena" : n.vztah <= -2 ? "cervena" : "zluta";
-                  return (
-                    <div key={n.id} className="mb-3 rounded-lg bg-slate-900/60 px-3 py-2">
-                      <div className="flex items-baseline justify-between text-sm">
-                        <span className="font-semibold text-white">{n.jmeno}</span>
-                        <span className="text-xs text-slate-400">{n.role} · prestiž {n.prestiz}</span>
-                      </div>
-                      <Pruh label="Vztah" hodnota={(n.vztah + 10) * 5} barva={barvaVztahu} zprava={`${n.vztah} / 10`} />
-                      {n.pamet.length > 0 && <p className="text-[11px] text-slate-500">Paměť: {n.pamet[n.pamet.length - 1]}</p>}
-                    </div>
-                  );
-                })}
-              </Karta>
-            </div>
-          )}
-        </section>
       </main>
 
-      {/* Stavové pruhy pod hlavním gridem */}
-      <main className="mx-auto mt-4 max-w-6xl px-4">
-        <Karta>
-          <h3 className="mb-3 font-bold text-white">Osobní ukazatele</h3>
-          <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
-            <Pruh label="Známost lokální" hodnota={a.znamostLokal} barva={skala(a.znamostLokal, 20, 45, true)} />
-            <Pruh label="Známost ve státě" hodnota={a.znamostStat} barva={skala(a.znamostStat, 15, 40, true)} />
-            <Pruh label="Známost národní" hodnota={a.znamostNarod} barva={skala(a.znamostNarod, 15, 40, true)} />
-            <Pruh label="Sociální kapitál" hodnota={a.socialniKapital} barva={skala(a.socialniKapital, 25, 50, true)} />
-            <Pruh label="Integrita" hodnota={a.integrita} barva={skala(a.integrita, 40, 65, true)} />
-            <Pruh label="Etika" hodnota={a.etika * 10} barva={skala(a.etika * 10, 30, 60, true)} zprava={`${a.etika} / 10`} />
-            <Pruh label="Prodejnost (vnímání ovlivnitelnosti)" hodnota={a.prodejnost * 10} barva={skala(a.prodejnost * 10, 60, 30, false)} zprava={`${a.prodejnost} / 10`} />
-            <Pruh label="Kriminální riziko" hodnota={hra.pravni.kriminalniRiziko} barva={skala(hra.pravni.kriminalniRiziko, 40, 20, false)} />
-            <Pruh label="Riziko FEC auditu" hodnota={hra.pravni.fecAuditRiziko} barva={skala(hra.pravni.fecAuditRiziko, 40, 20, false)} />
-          </div>
-          {hra.pravni.vysetrovani.length > 0 && (
-            <p className="mt-2 rounded bg-rose-900/40 px-3 py-2 text-xs text-rose-200">
-              Probíhá vyšetřování: {hra.pravni.vysetrovani[0].tema} (intenzita {Math.round(hra.pravni.vysetrovani[0].intenzita * 100)} %)
-            </p>
-          )}
-        </Karta>
-      </main>
-
-      {/* Modální formulář akce */}
+      {/* Modální formulář ruční akce */}
       {modalAkce && hra && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
           <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6">
@@ -937,15 +1139,6 @@ export default function App() {
 
       {/* Volební noc */}
       {volebniData && <VolebniNoc data={volebniData} zavreni={() => setVolebniData(null)} />}
-    </div>
-  );
-}
-
-function Udaj({ label, hodnota, barva }: { label: string; hodnota: string; barva: Barva }) {
-  return (
-    <div className="rounded-lg bg-slate-900/60 px-3 py-2">
-      <div className="text-[11px] uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`text-sm font-bold ${textBarvy(barva)}`}>{hodnota}</div>
     </div>
   );
 }

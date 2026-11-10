@@ -1,7 +1,7 @@
 /*
  * engine-bundle.ts — sloučený engine (všechny moduly v jednom souboru).
  * Generováno mechanicky z engine/src/*.ts; úpravy provádějte v modulech.
- * Pořadí: rng, state, zakony, law, economy, indicators, social, elections, actions, events, audit, game.
+ * Pořadí: rng, state, zakony, law, economy, indicators, social, elections, actions, events, audit, game, ai.
  */
 
 /* ===== rng.ts ===== */
@@ -61,7 +61,6 @@ export class Rng {
     return this.s;
   }
 }
-
 
 /* ===== state.ts ===== */
 /**
@@ -362,7 +361,6 @@ export function vytvorNovouHru(p: NewGameParams): GameState {
 export function rngProStav(s: GameState): Rng {
   return new Rng(s.seed + s.kolo * 7919);
 }
-
 
 /* ===== zakony.ts ===== */
 /**
@@ -744,7 +742,6 @@ export function citujZakony(ids: string[]): string {
   return " [" + citace.join("; ") + "]";
 }
 
-
 /* ===== law.ts ===== */
 /**
  * law.ts — právní vrstva: ústavní volitelnost (Art. I §2/§3, Art. II §1,
@@ -999,7 +996,6 @@ export function pravniTick(s: GameState, pravdepodobnostniTah: number): PravniUd
   return out;
 }
 
-
 /* ===== economy.ts ===== */
 /**
  * economy.ts — ekonomický model: kvartální přepočet makra (Okun, Phillips,
@@ -1101,7 +1097,6 @@ export function lokalkaTick(s: GameState, d: LokalkaDeltak): Local {
   return l;
 }
 
-
 /* ===== indicators.ts ===== */
 /**
  * indicators.ts — kariérní brance (dračí doupě): práhy pro postup na další
@@ -1190,7 +1185,6 @@ export function hudData(s: GameState): Record<string, string | number> {
     "Kriminalita": s.local.kriminalita,
   };
 }
-
 
 /* ===== social.ts ===== */
 /**
@@ -1337,7 +1331,6 @@ export function splnSlib(s: GameState, slibId: string): { ok: boolean; zprava: s
   s.postava.atributy.integrita = Math.min(100, s.postava.atributy.integrita + 3);
   return { ok: true, zprava: `Slib „${slib.text}“ byl splněn.` };
 }
-
 
 /* ===== elections.ts ===== */
 /**
